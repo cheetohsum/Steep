@@ -86,7 +86,7 @@ private:
     // Folder order (Options::folderOrder): names, or the date a folder's name
     // carries ("July 2024", "AugustSeptember2024", "7_24_23"), undated after.
     int sortRows_ (const Gtk::TreeModel::iterator& a, const Gtk::TreeModel::iterator& b);
-    int folderDate_ (const Glib::ustring& name);
+    int folderDate_ (const Glib::ustring& name, const Glib::ustring& parentName);
     std::map<std::string, int> folderDates_;   // name -> first day, INT_MIN = undated
     Gtk::ComboBoxText* orderCombo_ = nullptr;
 

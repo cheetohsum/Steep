@@ -1134,15 +1134,17 @@ void DirBrowser::fillRoot ()
 #endif
 }
 
-int DirBrowser::folderDate_ (const Glib::ustring& name)
+int DirBrowser::folderDate_ (const Glib::ustring& name, const Glib::ustring& parentName)
 {
-    const auto it = folderDates_.find(name.raw());
+    // "07_July" inside "2024" takes the parent's year.
+    const std::string key = parentName.raw() + "\x1f" + name.raw();
+    const auto it = folderDates_.find(key);
     if (it != folderDates_.end()) {
         return it->second;
     }
-    const auto info = dircleanup::parseFolderName(name.raw());
+    const auto info = dircleanup::parseFolderName(name.raw(), dircleanup::yearOfYearFolder(parentName.raw()));
     const int day = info.spans.empty() ? INT_MIN : info.spans.front().first;
-    folderDates_[name.raw()] = day;
+    folderDates_[key] = day;
     return day;
 }
 
@@ -1175,8 +1177,12 @@ int DirBrowser::sortRows_ (const Gtk::TreeModel::iterator& first, const Gtk::Tre
     // Date order is absolute: undo the column's own direction, which GTK
     // applies on top of this result.
     const int flip = options.dirBrowserSortType == Gtk::SORT_DESCENDING ? -1 : 1;
-    const int da = folderDate_(firstName);
-    const int db = folderDate_(secondName);
+    const auto parentOf = [this](const Gtk::TreeModel::iterator& it) {
+        const Glib::ustring dir = it->get_value(dtColumns.dirname);
+        return dir.empty() ? Glib::ustring() : Glib::ustring(Glib::path_get_basename(Glib::path_get_dirname(dir)));
+    };
+    const int da = folderDate_(firstName, parentOf(first));
+    const int db = folderDate_(secondName, parentOf(second));
     if (da != INT_MIN && db != INT_MIN) {
         if (da != db) {
             const bool newestFirst = options.folderOrder == 1;

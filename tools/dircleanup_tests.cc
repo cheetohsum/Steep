@@ -70,6 +70,25 @@ static void unitChecks()
     expectSpan("Mayhem", FolderKind::Purpose, nullptr, nullptr);
     expectSpan("Marching band", FolderKind::Purpose, nullptr, nullptr);
 
+    // Year > month layout: 2024 > 07_July
+    {
+        const FolderInfo y = parseFolderName("2024");
+        check(y.kind == FolderKind::Month && y.yearOnly && ymd(y.spans.front().first) == "2024-01-01"
+              && ymd(y.spans.back().last) == "2024-12-31", "2024 is a year folder");
+        check(yearOfYearFolder("2024") == 2024 && yearOfYearFolder("July 2024") == 0, "yearOfYearFolder");
+        const char* months[] = {"07_July", "07-July", "07 July", "July", "07", "7_July", "07_july"};
+        for (const char* n : months) {
+            const FolderInfo m = parseFolderName(n, 2024);
+            char what[96];
+            std::snprintf(what, sizeof(what), "%s inside 2024 -> July 2024", n);
+            check(m.kind == FolderKind::Month && !m.yearOnly && !m.spans.empty()
+                  && ymd(m.spans.front().first) == "2024-07-01" && ymd(m.spans.back().last) == "2024-07-31", what);
+        }
+        check(parseFolderName("07_July").kind != FolderKind::Month, "07_July alone has no year");
+        check(parseFolderName("Japan", 2024).kind == FolderKind::Purpose, "a plain name stays a plain name");
+        check(parseFolderName("07_July Japan", 2024).kind == FolderKind::Event, "month + words is an event");
+    }
+
     int y, m, d, hh, mm;
     check(dateFromFileName("IMG_20240712_101500.jpg", y, m, d, hh, mm) && y == 2024 && m == 7 && d == 12 && hh == 10, "IMG_ date");
     check(dateFromFileName("2024-07-12 18.03.22.jpg", y, m, d, hh, mm) && y == 2024 && m == 7 && d == 12, "dashed date");

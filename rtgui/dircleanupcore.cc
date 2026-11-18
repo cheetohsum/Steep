@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -269,7 +270,7 @@ int FolderInfo::width() const
     return w;
 }
 
-FolderInfo parseFolderName(const std::string& name)
+FolderInfo parseFolderName(const std::string& name, int contextYear)
 {
     FolderInfo info;
     const std::string s = lowerAscii(name);
@@ -381,11 +382,26 @@ FolderInfo parseFolderName(const std::string& name)
         }
     }
 
+    // "07_July": a month number in front of its own name is just ordering.
+    for (size_t t = 0; t + 1 < tokens.size(); ++t) {
+        if (!used[t] && tokens[t].kind == Token::Number && tokens[t + 1].kind == Token::Month
+                && tokens[t].value == tokens[t + 1].value) {
+            used[t] = true;
+        }
+    }
+    // Inside a year folder a bare month number ("07") is that month.
+    if (contextYear > 0 && tokens.size() == 1 && tokens[0].kind == Token::Number
+            && tokens[0].value >= 1 && tokens[0].value <= 12 && !used[0]) {
+        months.emplace_back(contextYear, tokens[0].value);
+        used[0] = true;
+    }
+
     // Month words: a year binds to the months before it that have none
     // (with a wrap: "DecemberJanuary2025" is Dec 2024 + Jan 2025); months
     // after the last year take that year.
     std::vector<int> pending;
     int lastYear = 0;
+    bool sawYear = false;
     for (size_t t = 0; t < tokens.size(); ++t) {
         if (used[t]) {
             continue;
@@ -395,6 +411,7 @@ FolderInfo parseFolderName(const std::string& name)
             used[t] = true;
         } else if (tokens[t].kind == Token::Year) {
             used[t] = true;
+            sawYear = true;
             lastYear = tokens[t].value;
             if (!pending.empty()) {
                 int y = lastYear;
@@ -416,8 +433,19 @@ FolderInfo parseFolderName(const std::string& name)
         }
         pending.clear();
     }
+    if (!pending.empty() && contextYear > 0) {
+        for (int m : pending) {
+            months.emplace_back(contextYear, m);   // "07_July" inside "2024"
+        }
+        pending.clear();
+    }
     if (!pending.empty()) {
         otherWords = true;   // a month with no year can't be placed
+    }
+    // "2024" alone: the whole year.
+    if (sawYear && months.empty() && days.empty() && !otherWords && lastYear) {
+        days.push_back({dayNumber(lastYear, 1, 1), dayNumber(lastYear, 12, 31)});
+        info.yearOnly = true;
     }
 
     for (const auto& ym : months) {
@@ -603,6 +631,17 @@ bool readCacheDateTime(const std::string& dataFile, int& y, int& m, int& d, int&
     return validDate(y, m, d);
 }
 
+int yearOfYearFolder(const std::string& name)
+{
+    const FolderInfo fi = parseFolderName(name);
+    if (!fi.yearOnly || fi.spans.empty()) {
+        return 0;
+    }
+    int y, m, d;
+    dayToYMD(fi.spans.front().first, y, m, d);
+    return y;
+}
+
 bool dateFromFileName(const std::string& fileName, int& y, int& m, int& d, int& hh, int& mm)
 {
     // Find 8 consecutive digits (optionally 4-2-2 with - or _ between) that
@@ -742,7 +781,7 @@ FolderScan scanFolder(const std::string& dir, const std::string& root, const std
     fs.name = Glib::path_get_basename(dir);
     fs.parent = parentOf(dir);
     fs.root = root;
-    fs.info = parseFolderName(fs.name);
+    fs.info = parseFolderName(fs.name, yearOfYearFolder(Glib::path_get_basename(fs.parent)));
     if (samePath(dir, root) && fs.info.kind != FolderKind::Month) {
         fs.info.kind = FolderKind::Root;
     }
@@ -933,10 +972,68 @@ std::vector<Suggestion> suggest(const std::vector<FolderScan>& folders)
         return false;
     };
 
+    // A year folder holding month folders (2024 > 07_July) is a container:
+    // its loose photos belong in the months, and it takes none itself.
+    std::set<std::string> yearContainers;
+    for (const auto& f : folders) {
+        if (!f.info.yearOnly) {
+            continue;
+        }
+        for (const auto& child : folders) {
+            if (child.info.kind == FolderKind::Month && !child.info.yearOnly && samePath(child.parent, f.path)) {
+                yearContainers.insert(lowerAscii(f.path));
+                break;
+            }
+        }
+    }
+    const auto isContainer = [&](const FolderScan& f) {
+        return f.info.yearOnly && yearContainers.count(lowerAscii(f.path)) > 0;
+    };
+
+    // Where a missing month goes: inside its year folder when the library is
+    // laid out that way (2024 > 07_July), named like the months already
+    // there; otherwise "July 2024" beside the source.
+    const auto monthChildName = [&](int y, int m) {
+        std::string sep = "_";
+        bool numbered = false;
+        for (const auto& f : folders) {
+            if (f.info.kind == FolderKind::Month && !f.info.yearOnly) {
+                const std::string p = Glib::path_get_basename(f.parent);
+                if (yearOfYearFolder(p) > 0 && f.name.size() > 3
+                        && std::isdigit(static_cast<unsigned char>(f.name[0]))
+                        && std::isdigit(static_cast<unsigned char>(f.name[1]))) {
+                    numbered = true;
+                    sep = std::string(1, f.name[2]);
+                    break;
+                }
+            }
+        }
+        char num[8];
+        std::snprintf(num, sizeof(num), "%02d", m);
+        const std::string month = monthFolderName(y, m).substr(0, monthFolderName(y, m).find(' '));
+        return numbered ? std::string(num) + sep + month : month;
+    };
+    const auto createPathFor = [&](const FolderScan& src, bool srcIsMonth, int y, int m) {
+        // An existing year folder for that year, under the same place.
+        for (const auto& f : folders) {
+            if (f.info.yearOnly && samePath(f.root, src.root) && yearOfYearFolder(f.name) == y) {
+                return Glib::build_filename(f.path, monthChildName(y, m));
+            }
+        }
+        // Year folders in use there, but not this year yet: make both.
+        for (const auto& f : folders) {
+            if (isContainer(f) && samePath(f.root, src.root)) {
+                return Glib::build_filename(Glib::build_filename(f.parent, std::to_string(y)), monthChildName(y, m));
+            }
+        }
+        const std::string home = srcIsMonth ? src.parent : src.path;
+        return Glib::build_filename(home, monthFolderName(y, m));
+    };
+
     // Month folders that can take photos.
     std::vector<const FolderScan*> targets;
     for (const auto& f : folders) {
-        if (f.info.kind == FolderKind::Month && !insideBlocked(f.path)) {
+        if (f.info.kind == FolderKind::Month && !insideBlocked(f.path) && !isContainer(f)) {
             targets.push_back(&f);
         }
     }
@@ -954,8 +1051,11 @@ std::vector<Suggestion> suggest(const std::vector<FolderScan>& folders)
     std::map<std::pair<std::string, std::string>, bool> rowNearEdge;
 
     for (const auto& src : folders) {
-        const bool isMonth = src.info.kind == FolderKind::Month;
-        if ((!isMonth && src.info.kind != FolderKind::Root) || insideBlocked(src.path)) {
+        // A year container behaves like a starred place: every dated loose
+        // photo in it belongs in a month folder.
+        const bool container = isContainer(src);
+        const bool isMonth = src.info.kind == FolderKind::Month && !container;
+        if ((!isMonth && !container && src.info.kind != FolderKind::Root) || insideBlocked(src.path)) {
             continue;
         }
 
@@ -1034,8 +1134,7 @@ std::vector<Suggestion> suggest(const std::vector<FolderScan>& folders)
                 int y, m, d;
                 dayToYMD(g->day, y, m, d);
                 choice[i].create = true;
-                const std::string home = isMonth ? src.parent : src.path;
-                choice[i].createPath = Glib::build_filename(home, monthFolderName(y, m));
+                choice[i].createPath = createPathFor(src, isMonth, y, m);
                 runDests[runOf[i]].insert(choice[i].createPath);
                 continue;
             }

@@ -41,11 +41,17 @@ struct Span {
 struct FolderInfo {
     FolderKind kind = FolderKind::Purpose;
     std::vector<Span> spans;
+    bool yearOnly = false;   // "2024": a year folder, usually holding month folders
     bool covers(int day) const;
     int width() const;   // total days covered
 };
 
-FolderInfo parseFolderName(const std::string& name);
+// `contextYear`: the year of a parent year folder (2024 > 07_July), which
+// month-only names ("07_July", "July", "07") take. 0 = none.
+FolderInfo parseFolderName(const std::string& name, int contextYear = 0);
+
+// The year a folder name stands for when it is only a year ("2024"), else 0.
+int yearOfYearFolder(const std::string& name);
 
 enum class DateSource { None, Exif, FileName, Run };
 
