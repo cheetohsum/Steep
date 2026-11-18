@@ -9,15 +9,23 @@
 // tripod burst, bracket or timelapse of the same scene counts once -- is
 // known to be stuck. Known photosites are fixed in every frame, including
 // faint ones the single-frame test would miss. Once a camera has been seen
-// over three sessions its real defects are known, and a new candidate must
-// pass the strict (sensitivity 0) test to be fixed: what is left looks like
-// scene detail.
+// over three sessions its real defects are known, and a new candidate whose
+// neighbours caught light is held back: what is left looks like scene detail.
+//
+// Only clean frames teach it: at most kLearnMaxISO and at most
+// kLearnMaxCandidates candidates. A sensor has thousands of mildly warm
+// photosites that only spike above the noise at high gain; they recur from
+// one ISO 3200+ frame to the next, so learning from those frames made them
+// "known" and fixed them in every daylight frame too (an X-T4 reached 3942
+// known photosites, of which ~180 show at ISO <= 800). Noisy frames still get
+// the known fixes and their own single-frame candidates, they just don't
+// teach. A file from before this rule (format 1) is set aside as
+// <name>.txt.v1 and the camera is learned again.
 //
 // One small text file per camera body in the settings folder. Reprocessing a
 // frame adds nothing (same time, same session), so the files only grow with
-// genuinely new candidates; each frame contributes at most its strongest
-// kMaxPerFrame, and single-session entries are evicted oldest first past
-// kMaxEntries. Thread-safe.
+// genuinely new candidates; single-session entries are evicted oldest first
+// past kMaxEntries. Thread-safe.
 
 #include <cstdint>
 #include <map>
@@ -38,14 +46,16 @@ class StuckPixelMemory
 public:
     static constexpr std::int64_t kSessionGap = 12 * 3600; // seconds
     static constexpr int kKnownSessions = 2;               // sessions before a photosite counts as stuck
-    static constexpr int kMatureSessions = 3;              // sessions before new candidates must be strict
-    static constexpr size_t kMaxPerFrame = 300;
+    static constexpr int kMatureSessions = 3;              // sessions before ambiguous new candidates wait
+    static constexpr int kLearnMaxISO = 1600;              // noisier frames don't teach ...
+    static constexpr size_t kLearnMaxCandidates = 300;     // ... nor frames full of candidates
     static constexpr size_t kMaxEntries = 20000;
 
     struct Verdict {
         std::vector<std::pair<int, int>> known; // photosites to fix in every frame
         bool mature = false;
         int sessions = 0;                       // sessions this camera has been seen in
+        bool learned = false;                   // this frame taught the memory (a clean frame)
     };
 
     static StuckPixelMemory& instance();
@@ -54,9 +64,11 @@ public:
     void setDirectory(const std::string& directory);
 
     // Remembers this frame's candidates (timestamp: capture time, seconds;
-    // 0 = unknown, then nothing is learned from it) and returns what is known
-    // about the camera afterwards.
-    Verdict update(const std::string& cameraKey, std::int64_t timestamp, std::vector<StuckPixelCandidate> candidates);
+    // 0 = unknown, then nothing is learned from it; iso: 0 = unknown) and
+    // returns what is known about the camera afterwards. Frames above
+    // kLearnMaxISO or with more than kLearnMaxCandidates candidates teach
+    // nothing.
+    Verdict update(const std::string& cameraKey, std::int64_t timestamp, int iso, const std::vector<StuckPixelCandidate>& candidates);
 
     // What is known, without learning anything.
     Verdict query(const std::string& cameraKey);
@@ -72,6 +84,7 @@ private:
     };
     struct Camera {
         bool loaded = false;
+        bool dirty = false; // set aside an old file: write the new one on the next lesson
         std::vector<std::int64_t> sessions; // session anchors seen for the camera (capped)
         std::map<std::pair<int, int>, Entry> pixels;
         std::uint32_t touch = 0;

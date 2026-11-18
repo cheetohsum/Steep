@@ -2149,7 +2149,8 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
         memory.setDirectory(settings->stuckPixelMemoryDir);
         const std::string cameraKey = ri->get_maker() + " " + ri->get_model() + " " + idata->getSerialNumber() + " "
             + std::to_string(W) + "x" + std::to_string(H);
-        const StuckPixelMemory::Verdict verdict = memory.update(cameraKey, static_cast<std::int64_t>(idata->getDateTimeAsTS()), candidates);
+        const StuckPixelMemory::Verdict verdict = memory.update(cameraKey, static_cast<std::int64_t>(idata->getDateTimeAsTS()),
+                                                                       idata->getISOSpeed(), candidates);
 
         const auto listed = [](const std::vector<std::pair<int, int>>& sorted, const std::pair<int, int>& p) {
             return std::binary_search(sorted.begin(), sorted.end(), p);
@@ -2181,9 +2182,10 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
         totBP += nStuck;
 
         if (trace) {
-            fprintf(stderr, "[stuckpix] %s: %d fixed of %d candidates, %d held back; camera knows %d over %d sessions%s (sensitivity %d, %d ms: scan %d)\n",
+            fprintf(stderr, "[stuckpix] %s: %d fixed of %d candidates, %d held back; camera knows %d over %d sessions%s, %s (ISO %d, sensitivity %d, %d ms: scan %d)\n",
                     ri->get_filename().c_str(), nStuck, static_cast<int>(candidates.size()), heldBack, static_cast<int>(verdict.known.size()),
-                    verdict.sessions, verdict.mature ? ", mature" : "", raw.stuckPixelSensitivity, t1.etime(t0) / 1000, tFind.etime(t0) / 1000);
+                    verdict.sessions, verdict.mature ? ", mature" : "", verdict.learned ? "learned" : "not learned",
+                    idata->getISOSpeed(), raw.stuckPixelSensitivity, t1.etime(t0) / 1000, tFind.etime(t0) / 1000);
             for (const auto& p : fixed) {
                 fprintf(stderr, "[stuckpix]   row %d col %d colour %u value %.0f%s\n", p.first, p.second,
                         unsigned(cfa.color[p.first % cfa.period][p.second % cfa.period]), rawData[p.first][p.second],

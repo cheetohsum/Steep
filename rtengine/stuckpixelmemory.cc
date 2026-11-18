@@ -14,13 +14,15 @@ namespace rtengine {
 constexpr std::int64_t StuckPixelMemory::kSessionGap;
 constexpr int StuckPixelMemory::kKnownSessions;
 constexpr int StuckPixelMemory::kMatureSessions;
-constexpr size_t StuckPixelMemory::kMaxPerFrame;
+constexpr int StuckPixelMemory::kLearnMaxISO;
+constexpr size_t StuckPixelMemory::kLearnMaxCandidates;
 constexpr size_t StuckPixelMemory::kMaxEntries;
 
 namespace {
 
 constexpr size_t kMaxCameraSessions = 256;
-constexpr const char* kHeader = "steep-stuckpixels 1";
+constexpr const char* kHeader = "steep-stuckpixels 2";   // learned from clean frames only
+constexpr const char* kHeaderV1 = "steep-stuckpixels 1"; // learned from every frame: set aside
 
 bool sameSession(std::int64_t a, std::int64_t b)
 {
@@ -92,25 +94,23 @@ StuckPixelMemory::Verdict StuckPixelMemory::query(const std::string& cameraKey)
     return verdictFor(camera(cameraKey));
 }
 
-StuckPixelMemory::Verdict StuckPixelMemory::update(const std::string& cameraKey, std::int64_t timestamp, std::vector<StuckPixelCandidate> candidates)
+StuckPixelMemory::Verdict StuckPixelMemory::update(const std::string& cameraKey, std::int64_t timestamp, int iso,
+                                                   const std::vector<StuckPixelCandidate>& candidates)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     Camera& cam = camera(cameraKey);
-    if (timestamp <= 0) {
-        return verdictFor(cam); // no capture time: sessions can't be told apart, so learn nothing
+    // No capture time: sessions can't be told apart. High gain or a frame
+    // full of candidates: the spikes are mostly warm photosites that only
+    // clear the noise at that gain, and they repeat between such frames, so
+    // they would be learned as defects and fixed in every clean frame too.
+    const bool clean = (iso <= 0 || iso <= kLearnMaxISO) && candidates.size() <= kLearnMaxCandidates;
+    if (timestamp <= 0 || !clean) {
+        return verdictFor(cam);
     }
 
-    bool changed = addSession(cam.sessions, timestamp, kMaxCameraSessions);
+    bool changed = addSession(cam.sessions, timestamp, kMaxCameraSessions) || cam.dirty;
+    cam.dirty = false;
     ++cam.touch;
-
-    // The strongest candidates are the likeliest defects; a noise-dominated
-    // frame (ISO 25600: ~1800 candidates, none of them repeatable) must not
-    // flood the file.
-    std::sort(candidates.begin(), candidates.end(),
-              [](const StuckPixelCandidate& a, const StuckPixelCandidate& b) { return a.strength > b.strength; });
-    if (candidates.size() > kMaxPerFrame) {
-        candidates.resize(kMaxPerFrame);
-    }
 
     for (const StuckPixelCandidate& c : candidates) {
         const auto inserted = cam.pixels.emplace(std::make_pair(c.row, c.col), Entry());
@@ -150,7 +150,9 @@ StuckPixelMemory::Verdict StuckPixelMemory::update(const std::string& cameraKey,
     if (changed) {
         save(cameraKey, cam);
     }
-    return verdictFor(cam);
+    Verdict v = verdictFor(cam);
+    v.learned = true;
+    return v;
 }
 
 std::string StuckPixelMemory::pathFor(const std::string& key) const
@@ -184,7 +186,22 @@ void StuckPixelMemory::load(const std::string& key, Camera& cam)
         return;
     }
     char line[256];
-    bool ok = std::fgets(line, sizeof line, f) && std::string(line).compare(0, std::string(kHeader).size(), kHeader) == 0;
+    const bool haveHeader = std::fgets(line, sizeof line, f) != nullptr;
+    const auto startsWith = [&](const char* header) { return haveHeader && std::string(line).compare(0, std::string(header).size(), header) == 0; };
+    if (startsWith(kHeaderV1)) {
+        // Learned before only clean frames taught: its known photosites are
+        // mostly high-gain warm spikes. Kept beside the new file, not read;
+        // the camera starts over (immature, so nothing is held back meanwhile).
+        std::fclose(f);
+        const std::string path = pathFor(key);
+        const std::string aside = path + ".v1";
+        if (!g_file_test(aside.c_str(), G_FILE_TEST_EXISTS)) { // keep the first one: an older build may write v1 again
+            g_rename(path.c_str(), aside.c_str());
+        }
+        cam.dirty = true;
+        return;
+    }
+    bool ok = startsWith(kHeader);
     while (ok && std::fgets(line, sizeof line, f)) {
         long long a = 0, t0 = 0, t1 = 0;
         int row = 0, col = 0, count = 0;
