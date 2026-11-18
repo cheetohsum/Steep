@@ -401,13 +401,38 @@ private:
 // a zoomed-out view shows the fine, quiet noise a real scan would, never a
 // blow-up of the texture.
 //
-// The field is then applied as density: luminance is multiplied by
-// exp(noise * sigma), with sigma following where real granularity lives in
-// the tone scale (lighter mid-tones for a negative, whose dense areas print
-// as highlights; shadows for reversal film), fading at paper white and in
-// the empty shadows of a thin negative. Colour grain is the same field
-// built once per dye layer, coarser, with the blue layer coarsest.
+// Structure (V4). A grain you can see is not one crystal but a cluster of
+// them, so the texture is built as a cascade rather than a sum of octaves:
+// a crystal lattice (finer than the nominal grain) and the grain lattice
+// carry the fine texture, and the clump lattice both adds to it and
+// modulates its amplitude, which is what makes real grain look gathered and
+// intermittent instead of evenly blurred. A fourth, much coarser lattice adds
+// the faint mottle every emulsion coating has.
+//
+// The texture also changes along the tone scale, as it does on film. The
+// largest crystals are the most sensitive, so the thinly exposed parts of a
+// negative (the print's shadows) hold few, large, isolated grains, and the
+// heavily exposed parts hold all of them, small ones included, overlapping.
+// So toward the shadows the field is coarser and its histogram leans to
+// light specks (lone grains on clear base print lighter); toward the
+// highlights it is finer and leans to dark specks (the gaps left in an
+// almost continuous deposit).
+//
+// The field is applied as density: light is multiplied by exp(noise *
+// sigma), with sigma following where real granularity lives in the tone
+// scale (lighter mid-tones for a negative, whose dense areas print as
+// highlights; shadows for reversal film), fading at paper white and in the
+// empty shadows of a thin negative.
+//
+// Colour grain is not a tint laid over grey grain. A colour film has three
+// emulsion layers, each with its own crystals and so its own dye clouds, the
+// blue-sensitive layer's the coarsest. The Color control sets how far the
+// three layers' fields are independent: at 0 they are one field (a silver
+// image), at 100 nearly separate. Each layer's field multiplies the light of
+// its own primary, so the luminance grain is the weighted sum of the three
+// and the colour grain their difference, in the proportion film gives them.
 // ---------------------------------------------------------------------------
+
 namespace grainv3 {
 
 inline uint32_t mix(uint32_t h)
@@ -508,15 +533,16 @@ float unitSigma()
 }
 
 // Where in the tone scale the granularity lives: a hump centred on the
-// stock's density peak, wider toward black than toward white, with a floor
+// stock's density peak, reaching well down into the shadows (a thin negative
+// printed up is where grain is seen most), short toward white, with a floor
 // so the emptiest shadows are not glassily clean.
 inline float granularity(float lstar, float peak)
 {
     const float d = lstar - peak;
-    const float width = d < 0.f ? .40f : .22f;
+    const float width = d < 0.f ? .50f : .22f;
     const float hump = std::exp(-d * d / (width * width));
     const float paperWhite = 1.f - .85f * LIM((lstar - .88f) / .12f, 0.f, 1.f);
-    return (.14f + .86f * hump) * paperWhite;
+    return (.24f + .76f * hump) * paperWhite;
 }
 
 inline float labToY(float L)
@@ -529,6 +555,37 @@ inline float yToLab(float Y)
 {
     const float fy = Y > 216.f / 24389.f ? std::cbrt(Y) : (24389.f / 27.f * Y + 16.f) / 116.f;
     return (116.f * fy - 16.f) * (32768.f / 100.f);
+}
+
+// Lab (scaled by 327.68) to the linear light of three layer primaries and
+// back. The primaries are sRGB's, adapted to D50: close enough to a film's
+// three records for the purpose, and the round trip is exact.
+inline void labToLayers(float L, float a, float b, float& r, float& g, float& bl)
+{
+    const auto finv = [](float f) {
+        return f > 6.f / 29.f ? f * f * f : 3.f * (6.f / 29.f) * (6.f / 29.f) * (f - 4.f / 29.f);
+    };
+    const float fy = (L * (100.f / 32768.f) + 16.f) / 116.f;
+    const float fx = fy + a * (1.f / (327.68f * 500.f));
+    const float fz = fy - b * (1.f / (327.68f * 200.f));
+    const float X = .96422f * finv(fx), Y = finv(fy), Z = .82521f * finv(fz);
+    r = 3.1338561f * X - 1.6168667f * Y - .4906146f * Z;
+    g = -.9787684f * X + 1.9161415f * Y + .0334540f * Z;
+    bl = .0719453f * X - .2289914f * Y + 1.4052427f * Z;
+}
+
+inline void layersToLab(float r, float g, float bl, float& L, float& a, float& b)
+{
+    const auto f = [](float v) {
+        return v > 216.f / 24389.f ? std::cbrt(v) : (24389.f / 27.f * v + 16.f) / 116.f;
+    };
+    const float X = .4360747f * r + .3850649f * g + .1430804f * bl;
+    const float Y = .2225045f * r + .7168786f * g + .0606169f * bl;
+    const float Z = .0139322f * r + .0971045f * g + .7141733f * bl;
+    const float fx = f(X / .96422f), fy = f(Y), fz = f(Z / .82521f);
+    L = (116.f * fy - 16.f) * (32768.f / 100.f);
+    a = 500.f * (fx - fy) * 327.68f;
+    b = 200.f * (fy - fz) * 327.68f;
 }
 
 } // namespace grainv3
@@ -572,18 +629,25 @@ void ImProcFunctions::filmGrainV2(Imagefloat *lab, int isogr, int strengr, int s
         return Lattice{effective, amplitude * (pitch / effective) / sigmaUnit, seed};
     };
     const float clumping = LIM(character.clumping, 0.f, 1.f);
-    const double norm = 1. / std::sqrt(1. + double(clumping) * clumping);
-    const Lattice fine = lattice(cell, norm, 0x12345678U);
-    const Lattice clump = lattice(cell * 2.7, norm * clumping, 0x9ABCDEF0U);
+    // Crystals, grains, clumps, coating mottle. Each lattice is unit variance;
+    // they are weighted and normalised per pixel below, because the weights
+    // follow the tone scale.
+    const Lattice crystal = lattice(cell / 2.2, 1., 0x3C6EF372U);
+    const Lattice fine = lattice(cell, 1., 0x12345678U);
+    const Lattice clump = lattice(cell * 2.7, 1., 0x9ABCDEF0U);
+    const Lattice mottle = lattice(cell * 7.5, 1., 0x7F4A7C15U);
     const bool colour = colorgr > 0 && !character.mono && character.chroma > 0.f;
-    // Dye clouds are larger than silver grains, the blue-sensitive layer's
-    // the largest; the colour lattices stay independent of the density one.
-    const Lattice dyeA = lattice(cell * 1.6, 1., 0x56789ABCU);
-    const Lattice dyeB = lattice(cell * 2.0, 1., 0x2468ACE0U);
+    // Dye clouds are larger than the crystals that made them, the
+    // blue-sensitive layer's the largest.
+    const Lattice dyeR = lattice(cell * 1.3, 1., 0x56789ABCU);
+    const Lattice dyeG = lattice(cell * 1.5, 1., 0x2468ACE0U);
+    const Lattice dyeB = lattice(cell * 2.0, 1., 0x0F1E2D3CU);
 
     const float strength = strengr / 100.f;
     const float sigma = strength * .26f * std::max(.1f, character.gain);
-    const float chromaAmp = strength * (colorgr / 100.f) * LIM(character.chroma, 0.f, 3.f) * 2400.f;
+    // How far the three colour layers go their own way.
+    const float independence = colour ? LIM(colorgr / 100.f * character.chroma * .55f, 0.f, .9f) : 0.f;
+    const float shared = std::sqrt(1.f - independence * independence);
     const float peak = LIM(character.densityPeak, .1f, .9f);
 
     float **lab_L = lab->g.ptrs;
@@ -591,7 +655,7 @@ void ImProcFunctions::filmGrainV2(Imagefloat *lab, int isogr, int strengr, int s
     float **lab_b = lab->b.ptrs;
     constexpr int BAND = 32;
     const int bands = (H + BAND - 1) / BAND;
-    const int fields = colour ? 4 : 2;
+    const int fields = colour ? 7 : 4;
 
 #ifdef _OPENMP
 #   pragma omp parallel if (multiThread)
@@ -604,36 +668,65 @@ void ImProcFunctions::filmGrainV2(Imagefloat *lab, int isogr, int strengr, int s
         for (int band = 0; band < bands; ++band) {
             const int y0 = band * BAND, rows = std::min(BAND, H - y0);
             std::fill(buffer.begin(), buffer.end(), 0.f);
-            float* density = buffer.data();
-            float* dyeFieldA = density + size_t(BAND) * W;
-            float* dyeFieldB = dyeFieldA + size_t(BAND) * W;
-            splat(density, W, y0, rows, fine, s, originX, originY);
-            splat(density, W, y0, rows, clump, s, originX, originY);
+            const size_t plane = size_t(BAND) * W;
+            float* fieldCrystal = buffer.data();
+            float* fieldFine = fieldCrystal + plane;
+            float* fieldClump = fieldFine + plane;
+            float* fieldMottle = fieldClump + plane;
+            float* fieldR = colour ? fieldMottle + plane : nullptr;
+            float* fieldG = colour ? fieldR + plane : nullptr;
+            float* fieldB = colour ? fieldG + plane : nullptr;
+            splat(fieldCrystal, W, y0, rows, crystal, s, originX, originY);
+            splat(fieldFine, W, y0, rows, fine, s, originX, originY);
+            splat(fieldClump, W, y0, rows, clump, s, originX, originY);
+            splat(fieldMottle, W, y0, rows, mottle, s, originX, originY);
             if (colour) {
-                splat(dyeFieldA, W, y0, rows, dyeA, s, originX, originY);
-                splat(dyeFieldB, W, y0, rows, dyeB, s, originX, originY);
+                splat(fieldR, W, y0, rows, dyeR, s, originX, originY);
+                splat(fieldG, W, y0, rows, dyeG, s, originX, originY);
+                splat(fieldB, W, y0, rows, dyeB, s, originX, originY);
             }
             for (int j = y0; j < y0 + rows; ++j) {
-                const float* d = density + size_t(j - y0) * W;
-                const float* ca = dyeFieldA + size_t(j - y0) * W;
-                const float* cb = dyeFieldB + size_t(j - y0) * W;
+                const size_t row = size_t(j - y0) * W;
                 for (int i = 0; i < W; ++i) {
                     const float L = lab_L[j][i];
                     const float lstar = LIM(L / 32768.f, 0.f, 1.2f);
-                    const float g = granularity(lstar, peak);
-                    const float Y = labToY(L);
-                    if (Y > 0.f) {
-                        // Density: the grain multiplies light, it does not add to it.
-                        const float n = LIM(d[i], -4.f, 4.f);
-                        lab_L[j][i] = yToLab(Y * std::exp(n * sigma * g));
+                    const float tone = std::min(lstar, 1.f);
+                    const float g = granularity(lstar, peak) * sigma;
+
+                    // Coarse and gathered in the shadows, fine in the highlights.
+                    const float wCrystal = .45f + .75f * tone;
+                    const float wClump = clumping * (1.35f - .7f * tone);
+                    const float wGather = (.12f + .38f * clumping) * (1.2f - .4f * tone);
+                    const float wMottle = .16f * (1.3f - .6f * tone);
+                    const float c = fieldClump[row + i];
+                    const float gather = std::max(.4f, 1.f + wGather * c);
+                    const float texture = (wCrystal * fieldCrystal[row + i] + fieldFine[row + i])
+                                          / std::sqrt(1.f + wCrystal * wCrystal);
+                    const float norm = 1.f / std::sqrt(1.f + wGather * wGather + wClump * wClump + wMottle * wMottle);
+                    float n = (texture * gather + wClump * c + wMottle * fieldMottle[row + i]) * norm;
+                    // Lone light grains in the shadows, dark gaps in the highlights.
+                    const float skew = .07f * (1.f - 2.f * tone) - .02f;
+
+                    if (!colour) {
+                        const float Y = labToY(L);
+                        if (Y > 0.f) {
+                            n = LIM(n + skew * (n * n - 1.f), -4.5f, 4.5f);
+                            lab_L[j][i] = yToLab(Y * std::exp(n * g));
+                        }
+                        continue;
                     }
-                    if (colour) {
-                        // Chroma clouds ride the same granularity but keep
-                        // out of the deepest shadows, where a print holds no colour.
-                        const float c = chromaAmp * g * (.35f + .65f * std::sqrt(lstar));
-                        lab_a[j][i] += LIM(ca[i], -4.f, 4.f) * c;
-                        lab_b[j][i] += LIM(cb[i], -4.f, 4.f) * c * .9f;
+
+                    float layer[3];
+                    labToLayers(L, lab_a[j][i], lab_b[j][i], layer[0], layer[1], layer[2]);
+                    const float own[3] = {fieldR[row + i], fieldG[row + i], fieldB[row + i]};
+                    // The blue-sensitive layer is the fastest and the grainiest.
+                    constexpr float layerGain[3] = {1.f, 1.f, 1.25f};
+                    for (int k = 0; k < 3; ++k) {
+                        float v = shared * n + independence * own[k] * gather / std::sqrt(1.f + wGather * wGather);
+                        v = LIM(v + skew * (v * v - 1.f), -4.5f, 4.5f);
+                        layer[k] *= std::exp(v * g * layerGain[k]);
                     }
+                    layersToLab(layer[0], layer[1], layer[2], lab_L[j][i], lab_a[j][i], lab_b[j][i]);
                 }
             }
         }

@@ -36,7 +36,7 @@ struct FilmPresetsParams;
 struct GrainCharacter {
     float sizeMul = 1.f;      // multiplies the grain diameter the ISO slider implies
     float clumping = .35f;    // 0..1: weight of the coarser clump lattice
-    float chroma = 1.f;       // multiplies the Color slider's dye-cloud amplitude
+    float chroma = 1.f;       // multiplies how far the Color slider lets the three dye layers' grain differ
     bool mono = false;        // silver image: no colour grain at all
     float densityPeak = .62f; // L* fraction (0..1) where granularity peaks
     float gain = 1.f;         // stock's graininess for its speed, 1 = typical
