@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """Generate the bundled look library under rtdata/profiles from catalogue.py.
 
-Three kinds of file are written:
+Two kinds of file are written:
 
-  * film looks  - a [Steep Look] header plus a complete [Film Presets] section.
-    The loader treats these as always-partial: they replace the Film Lab stage
-    and nothing else (rtengine/procparams.cc, "Steep Look").
-  * graded looks - plain partial pp3s that own Film Lab, colour grading and the
-    Lab lightness curve, plus any finish sections the look uses.
-  * layers      - plain partial pp3s that carry only texture / finish sections
-    (Grain, Light Effects, PCVignette, ...) and no Film Lab section, so they
-    stack on whatever look is already applied.
+  * looks   - partial pp3s that own a fixed set of "look" sections (Film Lab, colour grading,
+    colour toning, the Lab curves, the Black-and-White switch, grain, glow, vignette, tilt-shift,
+    graduated filter, soft light, dehaze, clarity, texture). Every look writes every one of those
+    sections, switched off where it does not use them, so one look never leaves residue under
+    the next.
+  * layers  - partial pp3s that carry a single finish section and nothing else, so they stack
+    on whatever look is applied.
 
-No kind may contain exposure compensation, white balance, crop, lens or
-raw keys; lint() enforces that, and that every key exists in procparams.cc.
+No file may contain exposure compensation, white balance, crop, lens or raw keys; lint()
+enforces that, and that every key is one procparams.cc reads.
 
     python tools/presets/make_presets.py            # write the files
     python tools/presets/make_presets.py --check    # lint only, write nothing
@@ -29,12 +28,10 @@ PROFILES = ROOT / "rtdata" / "profiles"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import catalogue  # noqa: E402
 
-# Every Film Lab key a look owns, with the engine default. Exposure and
-# PrintExposure are written as 0 because tools/film_look_probe.py requires it
-# and a look must not place exposure.
+# Film Lab keys a look owns, with the engine default. Exposure and PrintExposure are never
+# written: a look must not place exposure.
 FILM_DEFAULTS = [
-    ("Enabled", "true"), ("Preset", "cinema_reveal_35"), ("ModelVersion", 6),
-    ("Exposure", 0), ("PrintExposure", 0), ("PushPull", 0),
+    ("Enabled", "true"), ("Preset", "cinema_reveal_35"), ("ModelVersion", 6), ("PushPull", 0),
     ("Process", "auto"), ("Output", "scan"), ("Format", "35mm"),
     ("Backing", "auto"), ("BWFilter", "none"), ("LensDesign", "slr"),
     ("Strength", 100), ("Contrast", 0), ("Saturation", 0), ("Warmth", 0), ("Tint", 0),
@@ -57,32 +54,15 @@ ENUMS = {"Process": {"auto", "c41", "e6", "ecn2", "bw"},
          "Backing": {"auto", "intact", "removed"},
          "BWFilter": {"none", "yellow", "orange", "red", "green", "blue", "ortho"},
          "LensDesign": {"slr", "rangefinder", "telecentric"}}
-# Sections a layer file may carry. Nothing here places exposure or colour balance.
-LAYER_SECTIONS = {"Grain", "Light Effects", "PCVignette", "Clarity", "Texture"}
-# Sections a graded look may carry.
-LOOK_SECTIONS = LAYER_SECTIONS | {"Film Presets", "Color Grading", "Luminance Curve", "Black & White"}
+LAYER_SECTIONS = {"Grain", "Light Effects", "PCVignette", "Clarity", "Texture", "TiltShift", "Gradient"}
+LOOK_SECTIONS = LAYER_SECTIONS | {"Film Presets", "Color Grading", "ColorToning", "Luminance Curve",
+                                  "Black & White", "SoftLight", "Dehaze"}
+ALLOWED_KEYS = {"Black & White": {"Enabled", "Method"},
+                "ColorToning": {"Enabled", "Method", "LabGridALow", "LabGridBLow", "LabGridAHigh", "LabGridBHigh"},
+                "Luminance Curve": {"Enabled", "Brightness", "Contrast", "Chromaticity", "LCurve", "aCurve", "bCurve"}}
 FORBIDDEN_WORDS = re.compile(
     r"\b(kodak|fuji\w*|portra|velvia|provia|ektar|ektachrome|kodachrome|tri-?x|ilford|hp5|delta|agfa|"
-    r"cinestill|polaroid|leica|canon|nikon|sony|hasselblad|technicolor|arri|alexa)\b", re.I)
-
-
-def slug(name):
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-
-
-def film_look_text(group, look):
-    values = dict(FILM_DEFAULTS)
-    values["Preset"] = look["stock"]
-    for key, value in look.get("film", {}).items():
-        if key not in FILM_KEYS:
-            raise SystemExit("%s: unknown Film Lab key %s" % (look["name"], key))
-        values[key] = value
-    out = ["# %s" % look["note"],
-           "# Film-only recipe: preserves exposure, white balance, geometry and local edits.",
-           "[Steep Look]", "Version=1", "Kind=film", "Id=%s" % slug(group + " " + look["name"]),
-           "Family=%s" % look["family"], "", "[Film Presets]"]
-    out += ["%s=%s" % (key, values[key]) for key, _ in FILM_DEFAULTS]
-    return "\n".join(out) + "\n"
+    r"cinestill|polaroid|leica|canon|nikon|sony|hasselblad|technicolor|arri|alexa|aerochrome|lomo\w*)\b", re.I)
 
 
 def lab_curve(black=0.0, white=1.0, c=0.0, mid=0.0, **_):
@@ -95,56 +75,76 @@ def lab_curve(black=0.0, white=1.0, c=0.0, mid=0.0, **_):
     return "1;" + ";".join(points) + ";"
 
 
-def graded_look_text(look):
-    values = dict(FILM_DEFAULTS)
-    values["Preset"] = look["stock"]
-    for key, value in look.get("film", {}).items():
-        if key not in FILM_KEYS:
-            raise SystemExit("%s: unknown Film Lab key %s" % (look["name"], key))
-        values[key] = value
+def is_mono(look):
+    return look.get("bw") or look["stock"] == "silver_gelatin" or look.get("film", {}).get("Process") == "bw"
+
+
+def look_text(look):
     out = ["# %s" % look["note"],
-           "# Graded look: owns Film Lab, colour grading, the Lab curve and the Black-and-White switch,",
-           "# plus the finish sections listed below. It never sets exposure, white balance, crop or lens corrections.",
-           "# Apply with the fill option off so the rest of the edit is kept.",
+           "# Look: owns Film Lab, colour grading and toning, the Lab curves, the Black-and-White",
+           "# switch and the finish tools below. It never sets exposure, white balance, crop or lens",
+           "# corrections. Apply with the fill option off so the rest of the edit is kept.",
            "", "[Film Presets]"]
-    out += ["%s=%s" % (key, values[key]) for key, _ in FILM_DEFAULTS if key not in ("Exposure", "PrintExposure")]
+    if look["stock"] is None:
+        out += ["Enabled=false"]
+    else:
+        values = dict(FILM_DEFAULTS)
+        values["Preset"] = look["stock"]
+        for key, value in look.get("film", {}).items():
+            if key not in FILM_KEYS:
+                raise SystemExit("%s: unknown Film Lab key %s" % (look["name"], key))
+            values[key] = value
+        out += ["%s=%s" % (key, values[key]) for key, _ in FILM_DEFAULTS]
+
     cg = look.get("cg", {})
     lum = cg.get("lum", (0, 0, 0, 0))
     out += ["", "[Color Grading]", "Enabled=%s" % ("true" if cg else "false")]
     for zone, key, index in (("Shadows", "sh", 0), ("Midtones", "mid", 1), ("Highlights", "hi", 2), ("Global", "gl", 3)):
         hue, chroma = cg.get(key, (0, 0))
-        if chroma > 40:
-            raise SystemExit("%s: chroma out of range" % look["name"])
-        out += ["%sHue=%g" % (zone, hue), "%sSat=%g" % (zone, round(chroma / 40.0, 4)), "%sLum=%g" % (zone, lum[index])]
+        out += ["%sHue=%g" % (zone, hue), "%sSat=%g" % (zone, round(min(chroma, 40) / 40.0, 4)), "%sLum=%g" % (zone, lum[index])]
     out += ["Blending=100", "Balance=%g" % cg.get("bal", 60)]
+
+    # Colour toning Lab grid: (a, b) added at black and at white, in Lab units.
+    ct = look.get("ct")
+    out += ["", "[ColorToning]", "Enabled=%s" % ("true" if ct else "false"), "Method=LabGrid"]
+    al, bl, ah, bh = ct or (0, 0, 0, 0)
+    out += ["LabGridALow=%d" % round(al * 1000), "LabGridBLow=%d" % round(bl * 1000),
+            "LabGridAHigh=%d" % round(ah * 1000), "LabGridBHigh=%d" % round(bh * 1000)]
+
     lab = look.get("lab", {})
     out += ["", "[Luminance Curve]", "Enabled=%s" % ("true" if lab else "false"), "Brightness=0", "Contrast=0",
             "Chromaticity=%g" % lab.get("chroma", 0),
-            "LCurve=%s" % (lab_curve(**lab) if set(lab) - {"chroma"} else "0;")]
-    if "grain" in look:
-        iso, strength, colour, size = (tuple(look["grain"]) + (0, 100))[:4] if len(look["grain"]) < 4 else look["grain"]
-        out += ["", "[Grain]", "Enabled=true", "ISO=%d" % iso, "Strength=%d" % strength, "Scale=%d" % size, "Color=%d" % colour]
-    if "fx" in look:
-        fx = look["fx"]
-        out += ["", "[Light Effects]", "Enabled=true", "Threshold=%d" % fx.get("threshold", 70),
-                "Glow=%d" % fx.get("glow", 0), "GlowRadius=%d" % fx.get("radius", 25),
-                "Halation=%d" % fx.get("halation", 0), "HalationSize=%d" % fx.get("size", 30),
-                "HalationWarmth=%d" % fx.get("warmth", 70), "Flare=%d" % fx.get("flare", 0),
-                "FlareLength=%d" % fx.get("length", 40), "FlareAngle=%d" % fx.get("angle", 0)]
-    if "vig" in look:
-        strength, feather, roundness = (tuple(look["vig"]) + (50,))[:3]
-        out += ["", "[PCVignette]", "Enabled=true", "Strength=%g" % strength, "Feather=%d" % feather, "Roundness=%d" % roundness]
-    if "clarity" in look:
-        out += ["", "[Clarity]", "Enabled=true", "Radius=100", "Amount=%d" % look["clarity"]]
-    if "texture" in look:
-        out += ["", "[Texture]", "Enabled=true", "Radius=20", "Amount=%d" % look["texture"]]
-    # Film Lab carries the picture's earlier colour edits (the master RGB curve among them) over
-    # to its own output channel by channel, which puts colour back into a monochrome stock. With
-    # the Black-and-White tool on as well the result is neutral, and the stock's lens filters
-    # still act. Colour looks switch the tool off again so a mono look leaves nothing behind.
+            "LCurve=%s" % (lab["L"] if "L" in lab else lab_curve(**lab) if set(lab) & {"black", "white", "c", "mid"} else "0;"),
+            "aCurve=%s" % lab.get("a", "0;"), "bCurve=%s" % lab.get("b", "0;")]
+
+    # Film Lab carries the picture's earlier colour edits over to its own output channel by
+    # channel, which puts colour back into a monochrome stock; the Black-and-White tool keeps the
+    # result neutral, and the stock's lens filters still act.
     out += ["", "[Black & White]", "Enabled=%s" % ("true" if is_mono(look) else "false")]
     if is_mono(look):
         out += ["Method=Desaturation"]
+
+    iso, strength, colour, size = (tuple(look.get("grain", (400, 0))) + (0, 100))[:4]
+    out += ["", "[Grain]", "Enabled=%s" % ("true" if strength else "false"), "ISO=%d" % iso,
+            "Strength=%d" % strength, "Scale=%d" % size, "Color=%d" % colour]
+    fx = look.get("fx", {})
+    out += ["", "[Light Effects]", "Enabled=%s" % ("true" if fx else "false"), "Threshold=%d" % fx.get("threshold", 70),
+            "Glow=%d" % fx.get("glow", 0), "GlowRadius=%d" % fx.get("radius", 25),
+            "Halation=0", "HalationSize=30", "HalationWarmth=70", "Flare=%d" % fx.get("flare", 0),
+            "FlareLength=%d" % fx.get("length", 40), "FlareAngle=%d" % fx.get("angle", 0)]
+    strength, feather, roundness = (tuple(look.get("vig", (0, 50))) + (50,))[:3]
+    out += ["", "[PCVignette]", "Enabled=%s" % ("true" if strength else "false"), "Strength=%g" % strength,
+            "Feather=%d" % feather, "Roundness=%d" % roundness]
+    amount, pos, width, angle = (tuple(look.get("tilt", (0,))) + (50, 20, 0))[:4]
+    out += ["", "[TiltShift]", "Enabled=%s" % ("true" if amount else "false"), "Amount=%d" % amount,
+            "FocusPos=%d" % pos, "FocusWidth=%d" % width, "Feather=50", "Angle=%d" % angle]
+    strength, degree, feather, centre = (tuple(look.get("grad", (0,))) + (0, 40, 0))[:4]
+    out += ["", "[Gradient]", "Enabled=%s" % ("true" if strength else "false"), "Degree=%g" % degree,
+            "Feather=%d" % feather, "Strength=%g" % strength, "CenterX=0", "CenterY=%d" % centre]
+    out += ["", "[SoftLight]", "Enabled=%s" % ("true" if look.get("soft") else "false"), "Strength=%d" % look.get("soft", 30)]
+    out += ["", "[Dehaze]", "Enabled=%s" % ("true" if look.get("dehaze") else "false"), "Strength=%d" % look.get("dehaze", 50)]
+    out += ["", "[Clarity]", "Enabled=%s" % ("true" if look.get("clarity") else "false"), "Radius=100", "Amount=%d" % look.get("clarity", 0)]
+    out += ["", "[Texture]", "Enabled=%s" % ("true" if look.get("texture") else "false"), "Radius=20", "Amount=%d" % look.get("texture", 0)]
     return "\n".join(out) + "\n"
 
 
@@ -159,32 +159,18 @@ def layer_text(look):
     return "\n".join(out) + "\n"
 
 
-def is_mono(look):
-    return look["stock"] == "silver_gelatin" or look.get("film", {}).get("Process") == "bw"
-
-
-def text_for(group, look):
-    if "layers" in look:
-        return layer_text(look)
-    if is_mono(look) or any(key in look for key in ("cg", "lab", "grain", "fx", "vig", "clarity", "texture")):
-        return graded_look_text(look)
-    return film_look_text(group, look)
-
-
 def known_keys():
     """Every (section, key) the engine reads, scraped from procparams.cc."""
     text = (ROOT / "rtengine" / "procparams.cc").read_text(encoding="utf-8", errors="replace")
-    return set(re.findall(r'(?:assignFromKeyfile\(keyFile|keyFile\.has_key\(|keyFile\.get_\w+\(), ?"([^"]+)", "([^"]+)"', text)) | \
+    return set(re.findall(r'assignFromKeyfile\(keyFile, ?"([^"]+)", "([^"]+)"', text)) | \
         set(re.findall(r'keyFile\.(?:has_key|get_\w+)\("([^"]+)", "([^"]+)"', text))
 
 
 def lint(files):
     known = known_keys()
     problems = []
-    ids = set()
     for path, text in files.items():
-        name = path.stem
-        if FORBIDDEN_WORDS.search(name):
+        if FORBIDDEN_WORDS.search(path.stem):
             problems.append("%s: name uses a real brand" % path)
         section = None
         seen = {}
@@ -193,42 +179,27 @@ def lint(files):
                 continue
             if line.startswith("["):
                 section = line.strip("[]")
+                seen[section] = {}
                 continue
             key, value = line.split("=", 1)
-            seen.setdefault(section, {})[key] = value
-            if section == "Steep Look":
-                continue
+            seen[section][key] = value
             if (section, key) not in known:
                 problems.append("%s: [%s] %s is not a key the engine reads" % (path, section, key))
-        if "Steep Look" in seen:
-            if set(seen) != {"Steep Look", "Film Presets"}:
-                problems.append("%s: a film look may only carry Film Presets" % path)
-            film = seen["Film Presets"]
+        film = seen.get("Film Presets")
+        if film and film.get("Enabled") == "true":
             if film["Preset"] not in STOCKS:
                 problems.append("%s: unknown stock %s" % (path, film["Preset"]))
             for key, allowed in ENUMS.items():
                 if film[key] not in allowed:
                     problems.append("%s: %s=%s" % (path, key, film[key]))
-            if float(film["Exposure"]) != 0 or float(film["PrintExposure"]) != 0:
-                problems.append("%s: a look must not place exposure" % path)
-            if seen["Steep Look"]["Id"] in ids:
-                problems.append("%s: duplicate Id" % path)
-            ids.add(seen["Steep Look"]["Id"])
-        else:
-            film = seen.get("Film Presets")
-            if film:
-                if film["Preset"] not in STOCKS:
-                    problems.append("%s: unknown stock %s" % (path, film["Preset"]))
-                for key, allowed in ENUMS.items():
-                    if film[key] not in allowed:
-                        problems.append("%s: %s=%s" % (path, key, film[key]))
-                if "Exposure" in film or "PrintExposure" in film:
-                    problems.append("%s: a look must not place exposure" % path)
-            if not set(seen.get("Black & White", {})) <= {"Enabled", "Method"}:
-                problems.append("%s: a look may only switch the Black-and-White tool on or off" % path)
-            extra = set(seen) - (LOOK_SECTIONS if film else LAYER_SECTIONS)
-            if extra:
-                problems.append("%s: forbidden sections %s" % (path, sorted(extra)))
+        if film and ("Exposure" in film or "PrintExposure" in film):
+            problems.append("%s: a look must not place exposure" % path)
+        for name, allowed in ALLOWED_KEYS.items():
+            if not set(seen.get(name, {})) <= allowed:
+                problems.append("%s: [%s] carries keys a look may not set" % (path, name))
+        extra = set(seen) - (LOOK_SECTIONS if film else LAYER_SECTIONS)
+        if extra:
+            problems.append("%s: forbidden sections %s" % (path, sorted(extra)))
     return problems
 
 
@@ -243,21 +214,23 @@ def main():
             path = args.out / group / (look["name"] + ".pp3")
             if path in files:
                 raise SystemExit("duplicate name %s" % path)
-            files[path] = text_for(group, look)
+            files[path] = layer_text(look) if "layers" in look else look_text(look)
     problems = lint(files)
     for problem in problems:
         print(problem)
     if problems:
         raise SystemExit(1)
     if not args.check:
-        for group in catalogue.GROUPS:
+        for group in list(catalogue.GROUPS) + list(catalogue.RETIRED_GROUPS):
             folder = args.out / group
-            folder.mkdir(parents=True, exist_ok=True)
             wanted = {p.name for p in files if p.parent == folder}
             for stale in folder.glob("*.pp3"):
                 if stale.name not in wanted:
                     stale.unlink()
+            if folder.is_dir() and not wanted and not any(folder.iterdir()):
+                folder.rmdir()
         for path, text in files.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="ascii", newline="\r\n")
     counts = {}
     for path in files:
