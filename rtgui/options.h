@@ -254,6 +254,9 @@ public:
     int adjusterMaxDelay;
     int  startupDir;
     Gtk::SortType dirBrowserSortType;
+    // Folder tree order: 0 by name, 1 by the date in the folder name (newest
+    // first), 2 by that date oldest first. Undated folders follow, by name.
+    int folderOrder;
     Glib::ustring startupPath;
     Glib::ustring profilePath; // can be an absolute or relative path; depending on this value, bundled profiles may not be found
     bool useBundledProfiles;   // only used if multiUser == true

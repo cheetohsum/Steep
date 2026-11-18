@@ -514,6 +514,7 @@ void Options::setDefaults()
     defaultFiletypeFilter.clear();
     browseRecursive = false;
     browserGroupByFolder = true;
+    folderOrder = 1;
     globalGroupByDate = false;
     browseRecursiveDepth = 10;
     browseRecursiveMaxDirs = 100;
@@ -1764,6 +1765,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("File Browser", "GroupByFolder")) {
                     browserGroupByFolder = keyFile.get_boolean("File Browser", "GroupByFolder");
+                }
+
+                if (keyFile.has_key("File Browser", "FolderOrder")) {
+                    folderOrder = std::max(0, std::min(2, keyFile.get_integer("File Browser", "FolderOrder")));
                 }
 
                 if (keyFile.has_key("File Browser", "GlobalGroupByDate")) {
@@ -3041,6 +3046,7 @@ Glib::ustring Options::serializeKeyFile()
         keyFile.set_boolean("File Browser", "BrowseRecursive", browseRecursive);
         keyFile.set_boolean("File Browser", "GroupByFolder", browserGroupByFolder);
         keyFile.set_boolean("File Browser", "GlobalGroupByDate", globalGroupByDate);
+        keyFile.set_integer("File Browser", "FolderOrder", folderOrder);
         keyFile.set_integer("File Browser", "BrowseRecursiveDepth", browseRecursiveDepth);
         keyFile.set_integer("File Browser", "BrowseRecursiveMaxDirs", browseRecursiveMaxDirs);
         keyFile.set_boolean("File Browser", "BrowseRecursiveFollowLinks", browseRecursiveFollowLinks);

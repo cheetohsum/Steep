@@ -18,6 +18,7 @@
  */
 #include "dirbrowser.h"
 
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -28,6 +29,7 @@
 
 #include "backgroundtasks.h"
 #include "cachemanager.h"
+#include "dircleanupcore.h"
 #include "guiutils.h"
 #include "rtimage.h"
 #include "rtsurface.h"
@@ -861,27 +863,7 @@ void DirBrowser::fillDirTree ()
     // A freshly built tree has nothing marked yet; callers re-sync afterwards.
     currentDir_.clear();
     currentRowRef_ = Gtk::TreeRowReference();
-    dirTreeModel->set_sort_func(
-        dtColumns.filename,
-        [this](const Gtk::TreeModel::iterator& first, const Gtk::TreeModel::iterator& second) -> int
-        {
-            const Glib::ustring firstName = first ? first->get_value(dtColumns.filename) : Glib::ustring();
-            const Glib::ustring secondName = second ? second->get_value(dtColumns.filename) : Glib::ustring();
-
-            if (firstName == secondName) {
-                return 0;
-            }
-
-            if (firstName.empty()) {
-                return 1;
-            }
-
-            if (secondName.empty()) {
-                return -1;
-            }
-
-            return firstName.raw().compare(secondName.raw()) < 0 ? -1 : 1;
-        });
+    dirTreeModel->set_sort_func(dtColumns.filename, sigc::mem_fun(*this, &DirBrowser::sortRows_));
     dirtree->set_model (dirTreeModel);
 
     fillRoot ();
@@ -1150,6 +1132,62 @@ void DirBrowser::fillRoot ()
     childRow[dtColumns.filename] = "foo";
     childRow[dtColumns.childrenLoaded] = false;
 #endif
+}
+
+int DirBrowser::folderDate_ (const Glib::ustring& name)
+{
+    const auto it = folderDates_.find(name.raw());
+    if (it != folderDates_.end()) {
+        return it->second;
+    }
+    const auto info = dircleanup::parseFolderName(name.raw());
+    const int day = info.spans.empty() ? INT_MIN : info.spans.front().first;
+    folderDates_[name.raw()] = day;
+    return day;
+}
+
+int DirBrowser::sortRows_ (const Gtk::TreeModel::iterator& first, const Gtk::TreeModel::iterator& second)
+{
+    const Glib::ustring firstName = first ? first->get_value(dtColumns.filename) : Glib::ustring();
+    const Glib::ustring secondName = second ? second->get_value(dtColumns.filename) : Glib::ustring();
+
+    if (firstName == secondName) {
+        return 0;
+    }
+    if (firstName.empty()) {
+        return 1;
+    }
+    if (secondName.empty()) {
+        return -1;
+    }
+
+    const auto byName = [&]() {
+        // Case-insensitive, so "Kimo" and "kimo trip" sit together.
+        const int c = firstName.casefold().compare(secondName.casefold());
+        return c != 0 ? (c < 0 ? -1 : 1) : (firstName.raw() < secondName.raw() ? -1 : 1);
+    };
+
+    const auto& options = App::get().options();
+    if (options.folderOrder == 0) {
+        return firstName.raw().compare(secondName.raw()) < 0 ? -1 : 1;
+    }
+
+    // Date order is absolute: undo the column's own direction, which GTK
+    // applies on top of this result.
+    const int flip = options.dirBrowserSortType == Gtk::SORT_DESCENDING ? -1 : 1;
+    const int da = folderDate_(firstName);
+    const int db = folderDate_(secondName);
+    if (da != INT_MIN && db != INT_MIN) {
+        if (da != db) {
+            const bool newestFirst = options.folderOrder == 1;
+            return flip * ((da > db) == newestFirst ? -1 : 1);
+        }
+        return flip * byName();
+    }
+    if (da != INT_MIN || db != INT_MIN) {
+        return flip * (da != INT_MIN ? -1 : 1);   // dated folders first
+    }
+    return flip * byName();
 }
 
 void DirBrowser::on_sort_column_changed() const
@@ -2370,8 +2408,28 @@ void DirBrowser::buildPreviewPopover ()
     sidebarWidthScale_->set_hexpand(true);
     sidebarWidthScale_->set_size_request(150, -1);
     sidebarWidthScale_->add_mark(340, Gtk::POS_BOTTOM, "");   // the default
-    grid->attach(*widthLabel, 0, 6, 1, 1);
-    grid->attach(*sidebarWidthScale_, 1, 6, 1, 1);
+    Gtk::Label* orderLabel = Gtk::manage(new Gtk::Label(M("DIRBROWSER_ORDER"), Gtk::ALIGN_START));
+    orderCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    orderCombo_->append(M("DIRBROWSER_ORDER_NAME"));
+    orderCombo_->append(M("DIRBROWSER_ORDER_NEWEST"));
+    orderCombo_->append(M("DIRBROWSER_ORDER_OLDEST"));
+    orderCombo_->signal_changed().connect([this]() {
+        if (previewPopoverSyncing_) {
+            return;
+        }
+        App::get().mut_options().folderOrder = std::max(0, orderCombo_->get_active_row_number());
+        try {
+            Options::saveAsync();
+        } catch (Options::Error&) {}
+        if (dirTreeModel) {
+            // Setting the sort function again re-sorts with the new order.
+            dirTreeModel->set_sort_func(dtColumns.filename, sigc::mem_fun(*this, &DirBrowser::sortRows_));
+        }
+    });
+    grid->attach(*orderLabel, 0, 6, 1, 1);
+    grid->attach(*orderCombo_, 1, 6, 1, 1);
+    grid->attach(*widthLabel, 0, 7, 1, 1);
+    grid->attach(*sidebarWidthScale_, 1, 7, 1, 1);
     sidebarWidthScale_->signal_value_changed().connect([this]() {
         if (previewPopoverSyncing_) {
             return;
@@ -2384,7 +2442,7 @@ void DirBrowser::buildPreviewPopover ()
         }, 60);
     });
 
-    grid->attach(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), 0, 7, 2, 1);
+    grid->attach(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), 0, 8, 2, 1);
 
     // The browser's own Open source folder action: same icon, same words.
     Gtk::Button* openButton = Gtk::manage(new Gtk::Button(M("FILEBROWSER_POPUPOPENSOURCEFOLDER")));
@@ -2395,7 +2453,7 @@ void DirBrowser::buildPreviewPopover ()
     if (auto* label = dynamic_cast<Gtk::Label*>(openButton->get_child())) {
         label->set_xalign(0.f);
     }
-    grid->attach(*openButton, 0, 8, 2, 1);
+    grid->attach(*openButton, 0, 9, 2, 1);
 
     previewSwitch_->property_active().signal_changed().connect([this, sizeLabel, countLabel, ratedLabel]() {
         const bool on = previewSwitch_->get_active();
@@ -2450,6 +2508,7 @@ void DirBrowser::showPreviewMenu (GdkEventButton* event)
         showChecks_[i]->set_active(shows[i]);
     }
     sidebarWidthScale_->set_value(get_allocated_width() > 0 ? get_allocated_width() : options.dirBrowserWidth);
+    orderCombo_->set_active(std::max(0, std::min(2, options.folderOrder)));
     previewPopoverSyncing_ = false;
 
     previewPopover_->set_pointing_to(rect);
