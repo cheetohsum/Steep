@@ -402,6 +402,7 @@ public:
     // Multi-folder views (global scope, sub-folder browsing) group thumbnails
     // under a coloured heading per source folder, in the grid and filmstrip.
     bool browserGroupByFolder;
+    bool globalGroupByDate;      // global view: month groups instead of folder groups
     int browseRecursiveDepth;
     int browseRecursiveMaxDirs;
     bool browseRecursiveFollowLinks;

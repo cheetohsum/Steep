@@ -514,6 +514,7 @@ void Options::setDefaults()
     defaultFiletypeFilter.clear();
     browseRecursive = false;
     browserGroupByFolder = true;
+    globalGroupByDate = false;
     browseRecursiveDepth = 10;
     browseRecursiveMaxDirs = 100;
     browseRecursiveFollowLinks = true;
@@ -1763,6 +1764,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("File Browser", "GroupByFolder")) {
                     browserGroupByFolder = keyFile.get_boolean("File Browser", "GroupByFolder");
+                }
+
+                if (keyFile.has_key("File Browser", "GlobalGroupByDate")) {
+                    globalGroupByDate = keyFile.get_boolean("File Browser", "GlobalGroupByDate");
                 }
 
                 if (keyFile.has_key("File Browser", "BrowseRecursiveDepth")) {
@@ -3035,6 +3040,7 @@ Glib::ustring Options::serializeKeyFile()
         keyFile.set_boolean("File Browser", "SortDescending", sortDescending);
         keyFile.set_boolean("File Browser", "BrowseRecursive", browseRecursive);
         keyFile.set_boolean("File Browser", "GroupByFolder", browserGroupByFolder);
+        keyFile.set_boolean("File Browser", "GlobalGroupByDate", globalGroupByDate);
         keyFile.set_integer("File Browser", "BrowseRecursiveDepth", browseRecursiveDepth);
         keyFile.set_integer("File Browser", "BrowseRecursiveMaxDirs", browseRecursiveMaxDirs);
         keyFile.set_boolean("File Browser", "BrowseRecursiveFollowLinks", browseRecursiveFollowLinks);

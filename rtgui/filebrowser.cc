@@ -5136,6 +5136,28 @@ void FileBrowser::sortMethodRequested (int method)
     resort ();
 }
 
+void FileBrowser::setSortMethod (int method)
+{
+    if (method < 0 || method >= Options::SORT_METHOD_COUNT) {
+        return;
+    }
+    if (sortMethod[method] && !sortMethod[method]->get_active()) {
+        sortMethod[method]->set_active(true);   // activates: sortMethodRequested
+    } else {
+        sortMethodRequested(method);
+    }
+}
+
+void FileBrowser::setSortDescending (bool descending)
+{
+    const int i = descending ? 1 : 0;
+    if (sortOrder[i] && !sortOrder[i]->get_active()) {
+        sortOrder[i]->set_active(true);         // activates: sortOrderRequested
+    } else {
+        sortOrderRequested(i);
+    }
+}
+
 void FileBrowser::sortOrderRequested (int order)
 {
     auto& options = App::get().mut_options();

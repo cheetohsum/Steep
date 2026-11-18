@@ -32,6 +32,7 @@
 
 #include <giomm.h>
 
+#include "steeppopup.h"
 #include "exiffiltersettings.h"
 #include "exportpanel.h"
 #include "filebrowser.h"
@@ -333,6 +334,9 @@ private:
     // Folder headings show while a multi-folder view (global scope or
     // sub-folder browsing) is on and the preference allows them.
     void refreshFolderGrouping_(bool preference);
+    Gtk::Button* bSort_ = nullptr;
+    std::unique_ptr<steepui::PopupMenu> sortMenu_;
+    void showSortMenu ();
     void refreshFolderGrouping_();
     // Rating filter: a star shows that rating and up; clicked again, that
     // rating only; a third click clears it.

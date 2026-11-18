@@ -227,6 +227,10 @@ public:
     // in the filmstrip). Re-sorts when it changes.
     void setFolderGrouping (bool on);
     bool folderGrouping () const { return groupByFolder_; }
+    // With grouping on: group by capture month (newest first when the sort is
+    // descending) instead of by source folder. Re-sorts when it changes.
+    void setMonthGrouping (bool on);
+    bool monthGrouping () const { return groupByMonth_; }
     // How many photos Up/Down moves from the current one. A fixed column
     // count, except in a grouped grid where folder rows can be short: there it
     // is the photo in the row above/below nearest in x.
@@ -327,6 +331,11 @@ private:
         bool continued = false; // a wrapped group's tail, sharing a row with a new group
     };
     bool groupByFolder_ = false;
+    bool groupByMonth_ = false;
+    // The group an entry belongs to: its folder, or its capture month.
+    int monthIndex_ (const ThumbBrowserEntryBase* e) const;      // year*12+month-1, -1 undated
+    std::string groupKey_ (const ThumbBrowserEntryBase* e) const;
+    Glib::ustring groupLabel_ (const ThumbBrowserEntryBase* e) const;
     std::vector<FolderHeading> folderHeadings_;
     int folderHeadingExtent_();
     void drawFolderHeadings_(const Cairo::RefPtr<Cairo::Context>& cr, int width, int height);

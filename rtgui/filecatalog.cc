@@ -636,6 +636,14 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     bFilterToggle_->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::filterToggled));
     buttonBar->pack_start(*addCountBadge(*bFilterToggle_, filterCountBadge_), Gtk::PACK_SHRINK);
 
+    // Sort: name or date, direction, and in the global view folder or month groups.
+    bSort_ = Gtk::manage(new Gtk::Button());
+    bSort_->set_image(*Gtk::manage(new RTImage("sort-modern", Gtk::ICON_SIZE_BUTTON)));
+    bSort_->set_relief(Gtk::RELIEF_NONE);
+    bSort_->set_tooltip_text(M("FILEBROWSER_POPUPSORTBY"));
+    bSort_->signal_clicked().connect(sigc::mem_fun(*this, &FileCatalog::showSortMenu));
+    buttonBar->pack_start(*bSort_, Gtk::PACK_SHRINK);
+
     // Global scope: apply the active filter across every known folder
     globalAliveToken_ = std::make_shared<std::atomic<bool>>(true);
     bGlobalScope_ = Gtk::manage(new Gtk::ToggleButton());
@@ -4234,9 +4242,44 @@ void FileCatalog::syncGlobalScopeMirrors ()
 void FileCatalog::refreshFolderGrouping_ (bool preference)
 {
     if (fileBrowser) {
+        // Global view by date: month groups whatever the folder preference.
+        const bool byMonth = globalScopeActive_ && App::get().options().globalGroupByDate;
+        fileBrowser->setMonthGrouping(byMonth);
         fileBrowser->setFolderGrouping(
-            preference && (globalScopeActive_ || App::get().options().browseRecursive));
+            byMonth || (preference && (globalScopeActive_ || App::get().options().browseRecursive)));
     }
+}
+
+void FileCatalog::showSortMenu ()
+{
+    const auto& options = App::get().options();
+    sortMenu_.reset(new steepui::PopupMenu());
+
+    const int method = options.sortMethod == Options::SORT_BY_DATE ? 1
+                     : options.sortMethod == Options::SORT_BY_NAME ? 0 : -1;
+    sortMenu_->addRadioGroup({M("SORT_BY_NAME"), M("SORT_BY_DATE")}, method, [this](int i) {
+        if (fileBrowser) {
+            fileBrowser->setSortMethod(i == 0 ? Options::SORT_BY_NAME : Options::SORT_BY_DATE);
+        }
+    });
+    sortMenu_->addSeparator();
+    sortMenu_->addRadioGroup({M("SORT_ASCENDING"), M("SORT_DESCENDING")}, options.sortDescending ? 1 : 0, [this](int i) {
+        if (fileBrowser) {
+            fileBrowser->setSortDescending(i == 1);
+        }
+    });
+    if (globalScopeActive_) {
+        sortMenu_->addSeparator();
+        sortMenu_->addRadioGroup({M("FILEBROWSER_GROUP_FOLDER"), M("FILEBROWSER_GROUP_DATE")},
+                                 options.globalGroupByDate ? 1 : 0, [this](int i) {
+            App::get().mut_options().globalGroupByDate = i == 1;
+            try {
+                Options::saveAsync();
+            } catch (Options::Error&) {}
+            refreshFolderGrouping_();
+        });
+    }
+    sortMenu_->popupAtWidget(*bSort_);
 }
 
 void FileCatalog::refreshFolderGrouping_ ()

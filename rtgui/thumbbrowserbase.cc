@@ -27,6 +27,7 @@
 #include "options.h"
 #include "rtscalable.h"
 #include "thumbbrowserbase.h"
+#include "thumbnail.h"
 #include "thumbbrowserentrybase.h"
 
 #include "rtengine/rt_math.h"
@@ -878,7 +879,8 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
     // can split one, which only repeats its heading).
     folderHeadings_.clear();
     const int headingExtent = groupByFolder_ ? folderHeadingExtent_() : 0;
-    const std::string* currentFolder = nullptr;
+    std::string currentGroup;
+    bool haveGroup = false;
     constexpr std::size_t kPaletteSize = 12;
     // Stable across runs and builds (std::hash isn't), so a folder keeps its hue.
     const auto folderHash = [](const std::string& s) {
@@ -890,21 +892,26 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
     };
     std::size_t previousColour = kPaletteSize;
     const auto startsGroup = [&](const ThumbBrowserEntryBase* thumb) {
-        if (!groupByFolder_ || (currentFolder && *currentFolder == thumb->collate_folder)) {
+        if (!groupByFolder_) {
             return false;
         }
-        currentFolder = &thumb->collate_folder;
+        std::string key = groupKey_(thumb);
+        if (haveGroup && currentGroup == key) {
+            return false;
+        }
+        currentGroup = std::move(key);
+        haveGroup = true;
         return true;
     };
     const auto openHeading = [&](const ThumbBrowserEntryBase* thumb, int x, int y, int w, int h) {
         // Colour follows the folder, so it stays put as filters change; a
         // collision with the group before steps to the next hue.
-        std::size_t colour = folderHash(thumb->collate_folder) % kPaletteSize;
+        std::size_t colour = folderHash(groupKey_(thumb)) % kPaletteSize;
         if (colour == previousColour) {
             colour = (colour + 1) % kPaletteSize;
         }
         previousColour = colour;
-        folderHeadings_.push_back({x, y, w, h, thumb->folder, 0, colour});
+        folderHeadings_.push_back({x, y, w, h, groupLabel_(thumb), 0, colour});
     };
     const auto countInGroup = [&]() {
         if (groupByFolder_ && !folderHeadings_.empty()) {
@@ -976,20 +983,22 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
         std::vector<ThumbBrowserEntryBase*> visible;
         visible.reserve(fd.size());
         std::vector<Run> runs;
+        std::string lastKey;
         for (auto* thumb : fd) {
             if (thumb->filtered) {
                 thumb->setPosition(-10000, -10000, thumb->getMinimalWidth(), rowHeight);
                 thumb->drawable = false;
                 continue;
             }
-            const bool newRun = runs.empty()
-                || (groupByFolder_ && visible.back()->collate_folder != thumb->collate_folder);
+            std::string key = groupByFolder_ ? groupKey_(thumb) : std::string();
+            const bool newRun = runs.empty() || (groupByFolder_ && key != lastKey);
+            lastKey = std::move(key);
             if (newRun) {
                 std::size_t colour = kPaletteSize;
                 if (groupByFolder_) {
                     // Colour follows the folder, so it stays put as filters
                     // change; a collision with the group before steps on.
-                    colour = folderHash(thumb->collate_folder) % kPaletteSize;
+                    colour = folderHash(lastKey) % kPaletteSize;
                     if (colour == previousColour) {
                         colour = (colour + 1) % kPaletteSize;
                     }
@@ -1043,7 +1052,7 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
                         x = 0;
                         w = availWidth;   // a group alone on its row: the full-width band
                     }
-                    FolderHeading fh{x, curry, w, headingExtent, first->folder, static_cast<int>(r.count), r.colour};
+                    FolderHeading fh{x, curry, w, headingExtent, groupLabel_(first), static_cast<int>(r.count), r.colour};
                     fh.continued = !row[i].start;
                     folderHeadings_.push_back(fh);
                     i = j + 1;
@@ -1898,13 +1907,24 @@ bool ThumbBrowserBase::entryLess_(const ThumbBrowserEntryBase* a, const ThumbBro
 {
     // Folders always run A-Z; the user's sort (and its direction) applies
     // inside each folder.
-    if (groupByFolder_ && a->collate_folder != b->collate_folder) {
+    const auto& options = App::get().options();
+    if (groupByFolder_ && groupByMonth_) {
+        // Months follow the sort direction (newest first when descending);
+        // undated photos come last either way.
+        const int ma = monthIndex_(a);
+        const int mb = monthIndex_(b);
+        if (ma != mb) {
+            if (ma < 0 || mb < 0) {
+                return mb < 0;
+            }
+            return options.sortDescending ? ma > mb : ma < mb;
+        }
+    } else if (groupByFolder_ && a->collate_folder != b->collate_folder) {
         return a->collate_folder < b->collate_folder;
     }
 
     // Swap operands for descending: negating the result is not a strict weak
     // ordering (equal keys compare true both ways).
-    const auto& options = App::get().options();
     return options.sortDescending
         ? b->compare(*a, options.sortMethod)
         : a->compare(*b, options.sortMethod);
@@ -1971,6 +1991,51 @@ int ThumbBrowserBase::rowStepDistance(bool down)
     }
 
     return static_cast<int>(std::abs(best - from));
+}
+
+int ThumbBrowserBase::monthIndex_(const ThumbBrowserEntryBase* e) const
+{
+    if (!e || !e->thumbnail) {
+        return -1;
+    }
+    const Glib::DateTime& dt = e->thumbnail->getDateTime();
+    if (!dt.gobj()) {
+        return -1;
+    }
+    const int y = dt.get_year();
+    return y > 1900 ? y * 12 + dt.get_month() - 1 : -1;
+}
+
+std::string ThumbBrowserBase::groupKey_(const ThumbBrowserEntryBase* e) const
+{
+    if (groupByMonth_) {
+        return "m" + std::to_string(monthIndex_(e));
+    }
+    return e->collate_folder;
+}
+
+Glib::ustring ThumbBrowserBase::groupLabel_(const ThumbBrowserEntryBase* e) const
+{
+    if (!groupByMonth_) {
+        return e->folder;
+    }
+    const int idx = monthIndex_(e);
+    if (idx < 0) {
+        return M("FILEBROWSER_GROUP_UNDATED");
+    }
+    // "July 2024": the month name from the locale, no path.
+    const Glib::DateTime first = Glib::DateTime::create_local(idx / 12, idx % 12 + 1, 1, 0, 0, 0);
+    return first.format("%B %Y");
+}
+
+void ThumbBrowserBase::setMonthGrouping(bool on)
+{
+    if (on == groupByMonth_) {
+        return;
+    }
+    groupByMonth_ = on;
+    folderHeadings_.clear();
+    resort();
 }
 
 void ThumbBrowserBase::setFolderGrouping(bool on)

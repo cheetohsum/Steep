@@ -225,6 +225,12 @@ protected:
     void fromTrashRequested (std::vector<FileBrowserEntry*> tbe);
     void sortMethodRequested (int method);
     void sortOrderRequested (int order);
+public:
+    // From the toolbar's sort button: through the context menu's own radio
+    // items, so both stay in step.
+    void setSortMethod (int method);
+    void setSortDescending (bool descending);
+protected:
     void rankingRequested   (std::vector<FileBrowserEntry*> tbe, int rank);
     void colorlabelRequested   (std::vector<FileBrowserEntry*> tbe, int colorlabel);
     void pickRequested (std::vector<FileBrowserEntry*> tbe, int pick);
