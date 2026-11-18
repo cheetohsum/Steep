@@ -1,0 +1,104 @@
+# A cyanotype: Prussian blue shadows fading to pale blue paper.
+# Look: owns Film Lab, colour grading and toning, the Lab curves, the Black-and-White
+# switch and the finish tools below. It never sets exposure, white balance, crop or lens
+# corrections. Apply with the fill option off so the rest of the edit is kept.
+
+[Film Presets]
+Enabled=false
+
+[Color Grading]
+Enabled=false
+ShadowsHue=0
+ShadowsSat=0
+ShadowsLum=0
+MidtonesHue=0
+MidtonesSat=0
+MidtonesLum=0
+HighlightsHue=0
+HighlightsSat=0
+HighlightsLum=0
+GlobalHue=0
+GlobalSat=0
+GlobalLum=0
+Blending=100
+Balance=60
+
+[ColorToning]
+Enabled=true
+Method=LabGrid
+LabGridALow=-4000
+LabGridBLow=-36000
+LabGridAHigh=-5000
+LabGridBHigh=-10000
+
+[Luminance Curve]
+Enabled=true
+Brightness=0
+Contrast=0
+Chromaticity=0
+LCurve=1;0;0.0000;0.06;0.0444;0.125;0.0946;0.25;0.2033;0.375;0.3321;0.5;0.4750;0.625;0.6179;0.75;0.7467;0.875;0.8554;0.94;0.9056;1;0.9500;
+aCurve=0;
+bCurve=0;
+
+[Black & White]
+Enabled=true
+Method=Desaturation
+
+[Grain]
+Enabled=false
+ISO=400
+Strength=0
+Scale=100
+Color=0
+
+[Light Effects]
+Enabled=false
+Threshold=70
+Glow=0
+GlowRadius=25
+Halation=0
+HalationSize=30
+HalationWarmth=70
+Flare=0
+FlareLength=40
+FlareAngle=0
+
+[PCVignette]
+Enabled=false
+Strength=0
+Feather=50
+Roundness=50
+
+[TiltShift]
+Enabled=false
+Amount=0
+FocusPos=50
+FocusWidth=20
+Feather=50
+Angle=0
+
+[Gradient]
+Enabled=false
+Degree=0
+Feather=40
+Strength=0
+CenterX=0
+CenterY=0
+
+[SoftLight]
+Enabled=false
+Strength=30
+
+[Dehaze]
+Enabled=false
+Strength=50
+
+[Clarity]
+Enabled=false
+Radius=100
+Amount=0
+
+[Texture]
+Enabled=false
+Radius=20
+Amount=0
