@@ -324,6 +324,7 @@ private:
         Glib::ustring path;
         int count;
         std::size_t colour; // index into the heading palette
+        bool continued = false; // a wrapped group's tail, sharing a row with a new group
     };
     bool groupByFolder_ = false;
     std::vector<FolderHeading> folderHeadings_;

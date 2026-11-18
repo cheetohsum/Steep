@@ -16,6 +16,7 @@
  */
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include <glibmm/ustring.h>
@@ -33,6 +34,13 @@ std::vector<Glib::ustring> listImageFiles(const Glib::ustring& dirPath);
 // As listImageFiles, but also descends into subdirectories up to maxDepth
 // levels (0 = just dirPath). Hidden directories are skipped.
 std::vector<Glib::ustring> listImageFilesRecursive(const Glib::ustring& dirPath, int maxDepth);
+
+// One listing of a folder: its photos, its visible subfolders, and a
+// signature over every photo and .pp3/.xmp sidecar (name, size, write time).
+// The signature changes whenever a file appears, goes, or is rewritten.
+// Never 0 on success; false when the folder can't be read.
+bool listImageFilesStamped(const Glib::ustring& dirPath, std::vector<Glib::ustring>& files,
+                           std::vector<Glib::ustring>& subdirs, std::uint64_t& signature);
 
 // Load CacheImageData from the data cache without creating a Thumbnail.
 bool loadCacheDataForFile(const Glib::ustring& fpath, CacheImageData& cid);

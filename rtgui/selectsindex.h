@@ -17,6 +17,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <map>
 #include <utility>
 #include <vector>
@@ -64,15 +65,26 @@ public:
     // Write the index to disk now if dirty (atomic replace).
     void flushNow();
 
+    // Per-folder signature of its photos and sidecars (names, sizes, write
+    // times) as of the last full reconcile; 0 = none. A global scan skips
+    // a folder whose signature hasn't changed: nothing in it can have
+    // gained or lost a flag, rating or label since.
+    std::uint64_t dirStamp(const Glib::ustring& dir);
+    void setDirStamp(const Glib::ustring& dir, std::uint64_t signature);
+
 private:
     SelectsIndex();
 
     Glib::ustring indexPath() const;
+    Glib::ustring stampsPath() const;
     void load();
+    void loadStamps();
     void scheduleFlush();
 
     std::map<std::string, Entry> entries_;
+    std::map<std::string, std::uint64_t> dirStamps_;   // case-folded folder path -> signature
     MyMutex mutex_;
     bool dirty_ = false;
+    bool stampsDirty_ = false;
     std::atomic<bool> flushScheduled_{false};
 };

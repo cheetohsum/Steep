@@ -17,6 +17,11 @@
 #include "imagescanhelpers.h"
 
 #include <algorithm>
+#ifdef _WIN32
+#include "rtengine/leanwindows.h"
+#endif
+
+#include <algorithm>
 #include <climits>
 #include <cstring>
 #include <memory>
@@ -177,6 +182,111 @@ std::vector<Glib::ustring> listImageFilesRecursive(const Glib::ustring& dirPath,
     } catch (...) {}
 
     return result;
+}
+
+bool listImageFilesStamped(const Glib::ustring& dirPath, std::vector<Glib::ustring>& files,
+                           std::vector<Glib::ustring>& subdirs, std::uint64_t& signature)
+{
+    const auto& exts = App::get().options().parsedExtensionsSet;
+    struct Item {
+        std::string name;
+        std::uint64_t size;
+        std::uint64_t mtime;
+        bool operator<(const Item& o) const { return name < o.name; }
+    };
+    std::vector<Item> items;
+
+    const auto consider = [&](const Glib::ustring& name, std::uint64_t size, std::uint64_t mtime) {
+        const auto dot = name.rfind('.');
+        if (dot == Glib::ustring::npos) {
+            return;
+        }
+        const std::string ext = Glib::ustring(name.substr(dot + 1)).lowercase().raw();
+        const bool photo = exts.count(ext) > 0;
+        if (photo) {
+            files.push_back(Glib::build_filename(dirPath, name));
+        }
+        if (photo || ext == "pp3" || ext == "xmp") {
+            items.push_back({name.casefold().raw(), size, mtime});
+        }
+    };
+
+#ifdef _WIN32
+    // FindFirstFileEx returns size and write time with the listing: no stat
+    // per file, which is what made walking a spinning disk slow.
+    gunichar2* pattern = g_utf8_to_utf16(Glib::build_filename(dirPath, "*").c_str(), -1, nullptr, nullptr, nullptr);
+    if (!pattern) {
+        return false;
+    }
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileExW(reinterpret_cast<wchar_t*>(pattern), FindExInfoBasic, &fd,
+                                FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+    g_free(pattern);
+    if (h == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    do {
+        gchar* utf8 = g_utf16_to_utf8(reinterpret_cast<const gunichar2*>(fd.cFileName), -1, nullptr, nullptr, nullptr);
+        if (!utf8) {
+            continue;
+        }
+        const Glib::ustring name(utf8);
+        g_free(utf8);
+        if (name == "." || name == "..") {
+            continue;
+        }
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (!(fd.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) && name[0] != '.') {
+                subdirs.push_back(Glib::build_filename(dirPath, name));
+            }
+            continue;
+        }
+        const std::uint64_t size = (static_cast<std::uint64_t>(fd.nFileSizeHigh) << 32) | fd.nFileSizeLow;
+        const std::uint64_t mtime = (static_cast<std::uint64_t>(fd.ftLastWriteTime.dwHighDateTime) << 32)
+                                  | fd.ftLastWriteTime.dwLowDateTime;
+        consider(name, size, mtime);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+#else
+    try {
+        auto dir = Gio::File::create_for_path(dirPath);
+        auto enumerator = dir->enumerate_children("standard::name,standard::type,standard::is-hidden,standard::size,time::modified");
+        while (auto info = enumerator->next_file()) {
+            const Glib::ustring name = info->get_name();
+            if (info->get_file_type() == Gio::FILE_TYPE_DIRECTORY) {
+                if (!info->is_hidden() && !name.empty() && name[0] != '.') {
+                    subdirs.push_back(Glib::build_filename(dirPath, name));
+                }
+                continue;
+            }
+            if (info->get_file_type() != Gio::FILE_TYPE_REGULAR) {
+                continue;
+            }
+            consider(name, static_cast<std::uint64_t>(info->get_size()),
+                     static_cast<std::uint64_t>(info->get_attribute_uint64("time::modified")));
+        }
+    } catch (...) {
+        return false;
+    }
+#endif
+
+    std::sort(items.begin(), items.end());
+    std::uint64_t hash = 1469598103934665603ULL;   // FNV-1a 64
+    const auto mix = [&hash](const void* data, size_t n) {
+        const unsigned char* p = static_cast<const unsigned char*>(data);
+        for (size_t i = 0; i < n; ++i) {
+            hash ^= p[i];
+            hash *= 1099511628211ULL;
+        }
+    };
+    for (const auto& it : items) {
+        mix(it.name.data(), it.name.size());
+        mix("\0", 1);
+        mix(&it.size, sizeof(it.size));
+        mix(&it.mtime, sizeof(it.mtime));
+    }
+    signature = hash ? hash : 1;
+    return true;
 }
 
 bool loadCacheDataForFile(const Glib::ustring& fpath, CacheImageData& cid)

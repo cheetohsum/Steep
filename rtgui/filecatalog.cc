@@ -4038,6 +4038,13 @@ bool cidMatchesBrowserFilter(const BrowserFilter& filter, const CacheImageData& 
 // triggered only when this changes — filterChanged() also fires for internal
 // reasons (previews finishing, entries streaming in), and rescanning on
 // those spins the scan in a loop.
+// True when an unmarked photo (no flag, no stars, no label) can't match:
+// then the selects index alone holds every possible result.
+bool filterExcludesUnmarked(const BrowserFilter& filter)
+{
+    return !(filter.showUnflagged && filter.showRanked[0] && filter.showCLabeled[0]);
+}
+
 std::string filterScanKey(const BrowserFilter& filter)
 {
     std::string key;
@@ -4506,6 +4513,11 @@ void FileCatalog::startGlobalScan (bool fresh)
         std::atomic<size_t> nextDir{0};
         std::atomic<size_t> scanned{0};
         std::atomic<size_t> matched{0};
+        std::atomic<size_t> walkMatched{0};      // matches the folder walk added after the index
+        std::atomic<size_t> skippedDirs{0};
+        std::set<std::string> visitedDirs;       // guarded by batchMutex: nested roots walk once
+        std::set<std::string> indexKeys;         // paths the index stream already covered
+        bool indexSufficient = false;
         std::atomic<int> pendingWorkers{0};
         // When the last batch went to the GUI (guarded by batchMutex). Zero
         // until the first match, which is posted at once.
@@ -4515,6 +4527,10 @@ void FileCatalog::startGlobalScan (bool fresh)
     auto shared = std::make_shared<ScanShared>();
     shared->dirs = std::move(dirs);
     shared->indexEntries = std::move(indexSnapshot);
+    shared->indexSufficient = filterExcludesUnmarked(filter);
+    for (const auto& item : shared->indexEntries) {
+        shared->indexKeys.insert(item.first.raw());
+    }
 
     const auto postBatch = [this, alive, generation, shared](std::vector<Glib::ustring>&& ready) {
         if (ready.empty()) {
@@ -4563,6 +4579,21 @@ void FileCatalog::startGlobalScan (bool fresh)
         postBatch(std::move(ready));
     };
 
+    // Hand the results over: sorting, quick-thumb warmup, trash sync.
+    const auto finalize = [this, alive, generation, shared]() {
+        Glib::signal_idle().connect_once([this, alive, generation, shared]() {
+            if (!*alive || generation != globalScanGen_ || !globalScopeActive_) {
+                return;
+            }
+            // Release the deferred finalize and invoke it directly:
+            // previewsFinishedUI has its own retry machinery for in-flight
+            // preview work, and the pending flag is unreliable here (addFile
+            // resets it on every streamed batch, eating the loader's signal).
+            directoryScanComplete_ = true;
+            previewsFinishedUI(selectedDirectoryId);
+        });
+    };
+
     const auto flushRemainder = [shared, postBatch]() {
         std::vector<Glib::ustring> ready;
 
@@ -4582,7 +4613,7 @@ void FileCatalog::startGlobalScan (bool fresh)
     shared->pendingWorkers = workerCount;
 
     for (int worker = 0; worker < workerCount; ++worker) {
-        detachQuietly(std::thread([this, alive, cancel, generation, filter, recurse, shared, worker, pushMatch, flushRemainder]() {
+        detachQuietly(std::thread([this, alive, cancel, generation, filter, recurse, shared, worker, pushMatch, flushRemainder, finalize]() {
 #ifdef _OPENMP
             omp_set_num_threads(1); // see the directory scan: no team per scan thread
 #endif
@@ -4605,24 +4636,83 @@ void FileCatalog::startGlobalScan (bool fresh)
                     }
 
                     if (!Glib::file_test(item.first, Glib::FILE_TEST_EXISTS)) {
-                        SelectsIndex::getInstance().forget(item.first); // prune dead entries
+                        // Prune only when the folder is there: an unplugged
+                        // drive must not wipe its photos from the index.
+                        if (Glib::file_test(Glib::path_get_dirname(item.first), Glib::FILE_TEST_IS_DIR)) {
+                            SelectsIndex::getInstance().forget(item.first);
+                        }
                         continue;
                     }
 
                     pushMatch(item.first);
                 }
+
+                // Flags, ratings or labels only: the index holds every
+                // possible result, so the view is complete now. The walk
+                // below just keeps the index honest about outside changes.
+                if (shared->indexSufficient && !*cancel) {
+                    flushRemainder();
+                    finalize();
+                }
             }
 
             // Reconciling folder walk: absorbs selects the index missed and
-            // keeps it converged (adds, updates, removals).
+            // keeps it converged (adds, updates, removals). A folder whose
+            // listing signature is unchanged since its last reconcile is
+            // skipped (index-only filters) or only checked for unmarked
+            // photos by name (no file reads).
             for (size_t dirIndex = shared->nextDir++; dirIndex < shared->dirs.size(); dirIndex = shared->nextDir++) {
                 if (*cancel) {
                     break;
                 }
 
-                const auto files = recurse
-                    ? imagescan::listImageFilesRecursive(shared->dirs[dirIndex], 3)
-                    : imagescan::listImageFiles(shared->dirs[dirIndex]);
+                std::vector<std::pair<Glib::ustring, int>> pending{{shared->dirs[dirIndex], 0}};
+                while (!pending.empty() && !*cancel) {
+                const Glib::ustring dirPath = pending.back().first;
+                const int depth = pending.back().second;
+                pending.pop_back();
+                {
+                    std::lock_guard<std::mutex> lock(shared->batchMutex);
+                    if (!shared->visitedDirs.insert(dirPath.casefold().raw()).second) {
+                        continue;
+                    }
+                }
+
+                std::vector<Glib::ustring> files;
+                std::vector<Glib::ustring> subdirs;
+                std::uint64_t signature = 0;
+                if (!imagescan::listImageFilesStamped(dirPath, files, subdirs, signature)) {
+                    continue;
+                }
+                if (recurse && depth < 3) {
+                    for (const auto& sub : subdirs) {
+                        pending.emplace_back(sub, depth + 1);
+                    }
+                }
+
+                if (signature == SelectsIndex::getInstance().dirStamp(dirPath)) {
+                    ++shared->skippedDirs;
+                    if (shared->indexSufficient) {
+                        continue;
+                    }
+                    // Unchanged folder: its marked photos came from the index;
+                    // the rest are unmarked, which the filter judges by type.
+                    for (const auto& fpath : files) {
+                        ++shared->scanned;
+                        if (shared->indexKeys.count(fpath.raw())) {
+                            continue;
+                        }
+                        CacheImageData cid;
+                        cid.rating = 0;
+                        cid.pickLabel = 0;
+                        cid.colorLabel = 0;
+                        if (cidMatchesBrowserFilter(filter, cid, getExtension(fpath).uppercase())) {
+                            ++shared->walkMatched;
+                            pushMatch(fpath);
+                        }
+                    }
+                    continue;
+                }
 
                 for (const auto& fpath : files) {
                     if (*cancel) {
@@ -4651,36 +4741,33 @@ void FileCatalog::startGlobalScan (bool fresh)
                     }
 
                     if (match) {
+                        if (!shared->indexKeys.count(fpath.raw())) {
+                            ++shared->walkMatched;
+                        }
                         pushMatch(fpath);
                     }
+                }
+
+                if (!*cancel) {
+                    SelectsIndex::getInstance().setDirStamp(dirPath, signature);
+                }
                 }
             }
 
             if (--shared->pendingWorkers == 0) {
                 flushRemainder();
 
-                Glib::signal_idle().connect_once([this, alive, generation, shared]() {
-                    if (!*alive || generation != globalScanGen_) {
-                        return;
-                    }
+                if (App::get().options().rtSettings.verbose) {
+                    fprintf(stderr, "[globalScan] dirs=%zu skipped=%zu scanned=%zu matched=%zu walk=%zu index-only=%d\n",
+                            shared->visitedDirs.size(), shared->skippedDirs.load(), shared->scanned.load(),
+                            shared->matched.load(), shared->walkMatched.load(), shared->indexSufficient ? 1 : 0);
+                }
 
-                    if (App::get().options().rtSettings.verbose) {
-                        fprintf(stderr, "[globalScan] dirs=%zu scanned=%zu matched=%zu\n",
-                                shared->dirs.size(), shared->scanned.load(), shared->matched.load());
-                    }
-
-                    if (!globalScopeActive_) {
-                        return;
-                    }
-
-                    // Release the deferred finalize and invoke it directly:
-                    // previewsFinishedUI has its own retry machinery for
-                    // in-flight preview work, and the pending flag is
-                    // unreliable here (addFile resets it on every streamed
-                    // batch, eating the loader's drain signal).
-                    directoryScanComplete_ = true;
-                    previewsFinishedUI(selectedDirectoryId);
-                });
+                // Index-only filters finalized after the index stream; again
+                // only if the walk found something the index didn't have.
+                if (!shared->indexSufficient || shared->walkMatched.load() > 0) {
+                    finalize();
+                }
             }
         }));
     }

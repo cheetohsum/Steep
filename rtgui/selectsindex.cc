@@ -16,6 +16,7 @@
  */
 #include "selectsindex.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 
@@ -41,6 +42,80 @@ SelectsIndex& SelectsIndex::getInstance()
 SelectsIndex::SelectsIndex()
 {
     load();
+    loadStamps();
+}
+
+namespace
+{
+constexpr const char* kStampsVersion = "steep-dirstamps 1";
+
+std::string foldDir(const Glib::ustring& dir)
+{
+    std::string s = dir.casefold().raw();
+    while (s.size() > 3 && (s.back() == '\\' || s.back() == '/')) {
+        s.pop_back();
+    }
+    return s;
+}
+}
+
+Glib::ustring SelectsIndex::stampsPath() const
+{
+    return Glib::build_filename(App::get().options().cacheBaseDir, "selects.dirs");
+}
+
+void SelectsIndex::loadStamps()
+{
+    gchar* raw = nullptr;
+    gsize length = 0;
+    if (!g_file_get_contents(stampsPath().c_str(), &raw, &length, nullptr)) {
+        return;
+    }
+    const std::string text(raw, length);
+    g_free(raw);
+
+    // "sig<TAB>path" per line under a version line; another version: start over.
+    size_t pos = text.find('\n');
+    if (pos == std::string::npos || text.compare(0, pos, kStampsVersion) != 0) {
+        return;
+    }
+    MyMutex::MyLock lock(mutex_);
+    while (++pos < text.size()) {
+        const size_t end = text.find('\n', pos);
+        const std::string line = text.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        const size_t tab = line.find('\t');
+        if (tab != std::string::npos) {
+            dirStamps_[line.substr(tab + 1)] = std::strtoull(line.c_str(), nullptr, 16);
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        pos = end;
+    }
+}
+
+std::uint64_t SelectsIndex::dirStamp(const Glib::ustring& dir)
+{
+    MyMutex::MyLock lock(mutex_);
+    const auto it = dirStamps_.find(foldDir(dir));
+    return it == dirStamps_.end() ? 0 : it->second;
+}
+
+void SelectsIndex::setDirStamp(const Glib::ustring& dir, std::uint64_t signature)
+{
+    bool changed = false;
+    {
+        MyMutex::MyLock lock(mutex_);
+        auto& slot = dirStamps_[foldDir(dir)];
+        if (slot != signature) {
+            slot = signature;
+            stampsDirty_ = true;
+            changed = true;
+        }
+    }
+    if (changed) {
+        scheduleFlush();
+    }
 }
 
 Glib::ustring SelectsIndex::indexPath() const
@@ -170,12 +245,28 @@ std::vector<std::pair<Glib::ustring, SelectsIndex::Entry>> SelectsIndex::snapsho
 void SelectsIndex::flushNow()
 {
     std::string data;
+    std::string stamps;
+    bool writeEntries = false;
 
     {
         MyMutex::MyLock lock(mutex_);
 
+        if (stampsDirty_) {
+            stamps = std::string(kStampsVersion) + "\n";
+            char hex[24];
+            for (const auto& item : dirStamps_) {
+                std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(item.second));
+                stamps += hex;
+                stamps += '\t';
+                stamps += item.first;
+                stamps += '\n';
+            }
+            stampsDirty_ = false;
+        }
+
+        writeEntries = dirty_;
         if (!dirty_) {
-            return;
+            goto writeStamps;
         }
 
         data.reserve(entries_.size() * 96);
@@ -194,8 +285,14 @@ void SelectsIndex::flushNow()
         dirty_ = false;
     }
 
+writeStamps:
     // g_file_set_contents writes to a temp file and renames — atomic replace.
-    g_file_set_contents(indexPath().c_str(), data.c_str(), static_cast<gssize>(data.size()), nullptr);
+    if (writeEntries) {
+        g_file_set_contents(indexPath().c_str(), data.c_str(), static_cast<gssize>(data.size()), nullptr);
+    }
+    if (!stamps.empty()) {
+        g_file_set_contents(stampsPath().c_str(), stamps.c_str(), static_cast<gssize>(stamps.size()), nullptr);
+    }
 }
 
 void SelectsIndex::scheduleFlush()

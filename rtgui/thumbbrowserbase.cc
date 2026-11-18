@@ -951,55 +951,124 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
         resizeThumbnailArea(currx, rowHeight);
     } else {
         const int availWidth = std::max(internal.get_width(), 1);
-        int currx = 0;
         int curry = 0;
-        int entriesInRow = 0;
         int maxEntriesInRow = 0;
         int maxRowWidth = 0;
 
         drawableEntries_.clear();
         drawableEntries_.reserve(fd.size());
 
+        // Visible entries in browser order, split into runs of one folder.
+        struct Run {
+            std::size_t first;
+            std::size_t count;
+            int width;
+            std::size_t colour;
+        };
+        std::vector<ThumbBrowserEntryBase*> visible;
+        visible.reserve(fd.size());
+        std::vector<Run> runs;
         for (auto* thumb : fd) {
             if (thumb->filtered) {
                 thumb->setPosition(-10000, -10000, thumb->getMinimalWidth(), rowHeight);
                 thumb->drawable = false;
                 continue;
             }
-
-            const int itemWidth = std::max(thumb->getMinimalWidth(), 1);
-            if (startsGroup(thumb)) {
-                // A new folder starts on a fresh row, under its heading.
-                if (currx > 0) {
-                    maxRowWidth = std::max(maxRowWidth, currx);
-                    maxEntriesInRow = std::max(maxEntriesInRow, entriesInRow);
-                    curry += rowHeight;
-                    currx = 0;
-                    entriesInRow = 0;
+            const bool newRun = runs.empty()
+                || (groupByFolder_ && visible.back()->collate_folder != thumb->collate_folder);
+            if (newRun) {
+                std::size_t colour = kPaletteSize;
+                if (groupByFolder_) {
+                    // Colour follows the folder, so it stays put as filters
+                    // change; a collision with the group before steps on.
+                    colour = std::hash<std::string>()(thumb->collate_folder) % kPaletteSize;
+                    if (colour == previousColour) {
+                        colour = (colour + 1) % kPaletteSize;
+                    }
+                    previousColour = colour;
                 }
-                openHeading(thumb, 0, curry, availWidth, headingExtent);
-                curry += headingExtent;
-            } else if (currx > 0 && currx + itemWidth > availWidth) {
-                maxRowWidth = std::max(maxRowWidth, currx);
-                maxEntriesInRow = std::max(maxEntriesInRow, entriesInRow);
-                curry += rowHeight;
-                currx = 0;
-                entriesInRow = 0;
+                runs.push_back({visible.size(), 0, 0, colour});
             }
-
-            thumb->setPosition(currx, curry, itemWidth, rowHeight);
-            thumb->drawable = true;
-            drawableEntries_.push_back(thumb);
-            currx += itemWidth;
-            ++entriesInRow;
-            countInGroup();
+            visible.push_back(thumb);
+            ++runs.back().count;
+            runs.back().width += std::max(thumb->getMinimalWidth(), 1);
         }
 
-        if (entriesInRow > 0) {
+        // Groups share a row when the whole group fits after the one before
+        // (a few photos from each of several folders read as one line). A
+        // group that doesn't fit starts a fresh row and wraps as usual. Above
+        // a row where any group starts, the heading band is split into one
+        // segment per group, each as wide as its photos in that row.
+        struct Slot {
+            ThumbBrowserEntryBase* thumb;
+            int x;
+            int w;
+            std::size_t run;
+            bool start;
+        };
+        std::vector<Slot> row;
+        int currx = 0;
+
+        const auto flushRow = [&]() {
+            if (row.empty()) {
+                return;
+            }
+            bool anyStart = false;
+            for (const auto& slot : row) {
+                anyStart = anyStart || slot.start;
+            }
+            if (groupByFolder_ && anyStart) {
+                std::size_t segments = 0;
+                for (std::size_t i = 0; i < row.size(); ++i) {
+                    segments += i == 0 || row[i].run != row[i - 1].run;
+                }
+                for (std::size_t i = 0; i < row.size();) {
+                    std::size_t j = i;
+                    while (j + 1 < row.size() && row[j + 1].run == row[i].run) {
+                        ++j;
+                    }
+                    const Run& r = runs[row[i].run];
+                    const ThumbBrowserEntryBase* first = row[i].thumb;
+                    int x = row[i].x;
+                    int w = row[j].x + row[j].w - row[i].x;
+                    if (segments == 1 && row[i].start) {
+                        x = 0;
+                        w = availWidth;   // a group alone on its row: the full-width band
+                    }
+                    FolderHeading fh{x, curry, w, headingExtent, first->folder, static_cast<int>(r.count), r.colour};
+                    fh.continued = !row[i].start;
+                    folderHeadings_.push_back(fh);
+                    i = j + 1;
+                }
+                curry += headingExtent;
+            }
+            for (const auto& slot : row) {
+                slot.thumb->setPosition(slot.x, curry, slot.w, rowHeight);
+                slot.thumb->drawable = true;
+                drawableEntries_.push_back(slot.thumb);
+            }
             maxRowWidth = std::max(maxRowWidth, currx);
-            maxEntriesInRow = std::max(maxEntriesInRow, entriesInRow);
+            maxEntriesInRow = std::max(maxEntriesInRow, static_cast<int>(row.size()));
             curry += rowHeight;
+            row.clear();
+            currx = 0;
+        };
+
+        for (std::size_t r = 0; r < runs.size(); ++r) {
+            if (groupByFolder_ && currx > 0 && currx + runs[r].width > availWidth) {
+                flushRow();
+            }
+            for (std::size_t k = 0; k < runs[r].count; ++k) {
+                ThumbBrowserEntryBase* thumb = visible[runs[r].first + k];
+                const int itemWidth = std::max(thumb->getMinimalWidth(), 1);
+                if (currx > 0 && currx + itemWidth > availWidth) {
+                    flushRow();
+                }
+                row.push_back({thumb, currx, itemWidth, r, k == 0});
+                currx += itemWidth;
+            }
         }
+        flushRow();
 
         numOfCols = std::max(maxEntriesInRow, 1);
         MYREADERLOCK_RELEASE(l);
@@ -1111,7 +1180,39 @@ void ThumbBrowserBase::drawFolderHeadings_(const Cairo::RefPtr<Cairo::Context>& 
         nameLayout->set_font_description(nameFont);
         nameLayout->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
 
-        if (arrangement == TB_Vertical) {
+        if (fh.w >= fh.h && (fh.continued || fh.w < 420)) {
+            // A segment of a shared row: accent, the name cut to the
+            // segment, and the count at the right edge when there is room.
+            steepui::setSource(cr, colour, fh.continued ? 0.55 : 1.0);
+            steepui::roundedRect(cr, bx, by, accent, bh, steepui::Radius::S);
+            cr->fill();
+
+            const double textX = bx + accent + 8.0;
+            const double right = bx + bw - 8.0;
+            Glib::RefPtr<Pango::Layout> countLayout;
+            int cw = 0;
+            int ch = 0;
+            if (!fh.continued && bw >= 90.0) {
+                countLayout = internal.create_pango_layout(Glib::ustring::format(fh.count));
+                countLayout->set_font_description(metaFont);
+                steepui::useTabularNumerals(countLayout);
+                countLayout->get_pixel_size(cw, ch);
+            }
+            const double nameW = std::max(1.0, right - textX - (cw ? cw + 8.0 : 0.0));
+            nameLayout->set_ellipsize(Pango::ELLIPSIZE_END);
+            nameLayout->set_width(static_cast<int>(nameW * PANGO_SCALE));
+            int nw = 0;
+            int nh = 0;
+            nameLayout->get_pixel_size(nw, nh);
+            steepui::setSource(cr, fh.continued ? dim : ink);
+            cr->move_to(textX, by + (bh - nh) / 2.0);
+            nameLayout->show_in_cairo_context(cr);
+            if (countLayout) {
+                steepui::setSource(cr, dim);
+                cr->move_to(right - cw, by + (bh - ch) / 2.0);
+                countLayout->show_in_cairo_context(cr);
+            }
+        } else if (fh.w >= fh.h) {
             steepui::setSource(cr, colour);
             steepui::roundedRect(cr, bx, by, accent, bh, steepui::Radius::S);
             cr->fill();
