@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <mutex>
 #include <random>
 #include <chrono>
@@ -165,6 +166,9 @@ struct AIRemoverEngine::Impl {
     {
         if (unet) return;
         const long long start = AIIdleReaper::nowMs();
+        // About 12 s, nearly all of it reading 5 GB of weights and handing
+        // them to the GPU: the graph optimisation level makes no measurable
+        // difference, so there is nothing cheap to trim here.
         unet = session(kUnet);
         std::fprintf(stderr, "AI Remover: model loaded on %s in %.1f s\n", directml ? "DirectML" : "CPU",
                      (AIIdleReaper::nowMs() - start) / 1000.0);
@@ -340,10 +344,31 @@ bool AIRemoverEngine::fill(const float* r, const float* g, const float* b, const
             if (int(out.size()) != 4 * lcount) throw std::runtime_error("unexpected encoder output");
             return out;
         };
-        impl->encoder = impl->session(kEncoder, true);
-        const std::vector<float> pictureLatent = encode(image);
-        const std::vector<float> maskedLatent = encode(masked);
-        impl->encoder.reset();
+        // The codec is ten times faster on the GPU than on the CPU (about a
+        // second against fifteen), but its float32 activations at this size
+        // are the first thing to fail when GPU memory is short. That failure
+        // is a clean error, so: GPU first, CPU when it will not fit.
+        const auto codec = [&](const char* what, const std::function<void(bool onCpu)>& work) {
+            if (impl->directml && !std::getenv("STEEP_REMOVER_CPU_CODEC")) {
+                try {
+                    work(false);
+                    return;
+                } catch (const Ort::Exception& e) {
+                    impl->encoder.reset();
+                    impl->decoder.reset();
+                    if (job) job->checkpoint();
+                    std::fprintf(stderr, "AI Remover: %s on the GPU failed (%.120s); using the CPU\n", what, e.what());
+                }
+            }
+            work(true);
+        };
+        std::vector<float> pictureLatent, maskedLatent;
+        codec("encode", [&](bool onCpu) {
+            impl->encoder = impl->session(kEncoder, onCpu);
+            pictureLatent = encode(image);
+            maskedLatent = encode(masked);
+            impl->encoder.reset();
+        });
         memoryTrace("encoded");
         impl->loadDenoiser();
         memoryTrace("denoiser loaded");
@@ -408,9 +433,12 @@ bool AIRemoverEngine::fill(const float* r, const float* g, const float* b, const
 
         std::vector<std::vector<float>> decodeIn;
         decodeIn.push_back(std::move(latent));
-        impl->decoder = impl->session(kDecoder, true);
-        const auto decoded = impl->run(*impl->decoder, {"latent"}, decodeIn, {{1, 4, lh, lw}}, "image", job);
-        impl->decoder.reset();
+        std::vector<float> decoded;
+        codec("decode", [&](bool onCpu) {
+            impl->decoder = impl->session(kDecoder, onCpu);
+            decoded = impl->run(*impl->decoder, {"latent"}, decodeIn, {{1, 4, lh, lw}}, "image", job);
+            impl->decoder.reset();
+        });
         if (int(decoded.size()) != 3 * count) throw std::runtime_error("unexpected decoder output");
         memoryTrace("decoded");
 
