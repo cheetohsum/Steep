@@ -1,0 +1,11 @@
+# Removes the tilt-shift blur.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[TiltShift]
+Enabled=false
+Amount=0
+FocusPos=50
+FocusWidth=20
+Feather=50
+Angle=0

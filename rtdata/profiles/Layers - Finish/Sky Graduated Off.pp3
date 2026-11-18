@@ -1,0 +1,11 @@
+# Removes the graduated filter.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[Gradient]
+Enabled=false
+Degree=0
+Feather=25
+Strength=0.6
+CenterX=0
+CenterY=0

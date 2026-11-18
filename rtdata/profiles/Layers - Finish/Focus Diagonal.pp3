@@ -1,0 +1,11 @@
+# A slanted band of focus.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[TiltShift]
+Enabled=true
+Amount=60
+FocusPos=50
+FocusWidth=18
+Feather=50
+Angle=35

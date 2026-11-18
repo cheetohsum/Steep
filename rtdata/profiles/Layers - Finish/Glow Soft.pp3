@@ -4,8 +4,8 @@
 
 [Light Effects]
 Enabled=true
-Threshold=70
-Glow=25
+Threshold=55
+Glow=45
 GlowRadius=25
 Halation=0
 HalationSize=30
