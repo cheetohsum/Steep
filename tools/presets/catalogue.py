@@ -202,7 +202,7 @@ look(G, "Silver Classic", "silver", "A straight silver print: full range, neutra
 look(G, "Silver Soft", "silver", "A long-scale print on soft paper: open shadows, gentle highlights.",
      S, Contrast=-55, lab=dict(c=-0.15))
 look(G, "Silver Hard", "silver", "A hard-paper print: strong blacks, bright whites, little in between.",
-     S, Contrast=-12, lab=dict(c=0.2))
+     S, Contrast=-18, lab=dict(c=0.2))
 look(G, "Chromogenic Mono", "silver", "Colour-process monochrome: smooth, low grain, long highlights.",
      "cinema_reveal_35", Process="bw", Contrast=10)
 look(G, "Matte Mono", "silver", "Grey-black matte print: lifted blacks, soft contrast.",
@@ -211,22 +211,22 @@ look(G, "Large Format Mono", "silver", "Sheet-film smoothness: fine detail, no v
      S, Format="large", Contrast=-40, FilmSharpness=60, texture=15)
 # documentary
 look(G, "Documentary Hard", "documentary", "Hard documentary black-and-white: orange filter, gritty and sharp.",
-     S, Contrast=-12, BWFilter="orange", grain=(800, 50), clarity=12)
+     S, Contrast=-18, BWFilter="orange", grain=(800, 50), clarity=12)
 look(G, "Street Pushed", "documentary", "Fast film pushed for the street: coarse grain and heavy shadows.",
-     S, PushPull=0.25, Contrast=-25, grain=(1600, 60))
+     S, PushPull=0.15, Contrast=-25, grain=(1600, 60))
 look(G, "Newsprint Mono", "documentary", "A picture as the newspaper printed it: grey blacks, dull whites, coarse grain.",
      S, Contrast=-20, lab=dict(black=0.06, white=0.94), grain=(800, 40))
 look(G, "Wire Photo Mono", "documentary", "Agency black-and-white: crisp and firm, made to survive reproduction.",
-     S, Contrast=-18, FilmSharpness=60, clarity=15)
+     S, Contrast=-24, FilmSharpness=60, clarity=15)
 look(G, "Flash Mono", "documentary", "Direct flash at night: bright foreground, falling to dark corners.",
-     S, Contrast=-20, Rolloff=-40, vig=(0.45, 35))
+     S, Contrast=-26, Rolloff=-40, vig=(0.4, 35))
 # lens filters
 look(G, "Yellow Filter Skies", "filter", "Yellow filter: skies a step darker, clouds separated, skin natural.",
      S, BWFilter="yellow", Contrast=-30)
 look(G, "Orange Filter Landscape", "filter", "Orange filter: dark skies, bright stone and foliage edges.",
      S, BWFilter="orange", Contrast=-30)
 look(G, "Red Filter Drama", "filter", "Red filter: near-black skies, glowing skin and brick.",
-     S, BWFilter="red", Contrast=-25, vig=(0.25, 55))
+     S, BWFilter="red", Contrast=-32, vig=(0.25, 55))
 look(G, "Green Filter Foliage", "filter", "Green filter: leaves and grass lifted, lips and brick darker.",
      S, BWFilter="green", Contrast=-30)
 look(G, "Blue Filter Haze", "filter", "Blue filter: pale skies, heavy haze, weathered skin.",
@@ -248,7 +248,7 @@ look(G, "Low Key Mono", "key", "Dark and enclosed: mid-tones dropped, corners sh
 look(G, "Platinum Print", "print", "The platinum print's scale: very long, soft, grey-black shadows and quiet whites.",
      S, Format="large", Contrast=-55, lab=dict(black=0.03, white=0.97))
 look(G, "Lith Print", "print", "Lith development: gritty, blocked blacks against delicate highlights, coarse grain.",
-     S, Contrast=-12, lab=dict(white=0.96, c=0.25, mid=0.15), grain=(1600, 65))
+     S, Contrast=-20, lab=dict(white=0.96, c=0.25, mid=0.15), grain=(1600, 65))
 
 # --------------------------------------------------------------------------------------------
 # Texture
@@ -306,7 +306,7 @@ look(G, "Wedding Airy Blush", "wedding", "Light and airy with a blush: a little 
 look(G, "Wedding Dark and Moody", "wedding", "Dark and moody: lowered mid-tones, thin colour, amber highlights, shaded corners.",
      "twilight_160", Saturation=-20, cg=dict(sh=(GREEN, 3), hi=(AMBER, 4)), lab=dict(black=0.02, mid=-0.5, c=0.3), vig=(0.45, 55))
 look(G, "Wedding Moody Emerald", "wedding", "Dark and moody with deep green shadows, for woodland and garden light.",
-     "nostalgia_200", Saturation=-10, cg=dict(sh=(GREEN, 6), hi=(AMBER, 3)), lab=dict(black=0.02, mid=-0.4, c=0.3), vig=(0.4, 55))
+     "nostalgia_200", Saturation=-10, SkinProtection=70, cg=dict(sh=(GREEN, 5), hi=(AMBER, 4)), lab=dict(black=0.02, mid=-0.4, c=0.3), vig=(0.4, 55))
 look(G, "Wedding Classic Print", "wedding", "A timeless album print: neutral, slightly warm, full blacks.",
      "sovereign", Output="ra4", Contrast=-22, Warmth=8)
 look(G, "Family Bright", "family", "Bright, friendly colour for family sessions.",
