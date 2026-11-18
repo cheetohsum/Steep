@@ -427,6 +427,8 @@ switch.compact-switch slider { min-width: 16px; min-height: 16px; margin: -1px; 
 .smart-tool-status:hover { background-color: alpha(@steep_accent, 0.28); }
 .smart-tool-status image { padding: 2px; }
 .smart-repair-action { min-width: 20px; min-height: 20px; padding: 2px; border-radius: 3px; }
+/* Why the last large fill fell back to the standard model (tools/spot.cc). */
+.smart-repair-note { font-size: 0.85em; opacity: 0.8; margin-top: 2px; margin-bottom: 4px; }
 
 /*** Preset cards (presetlistpanel.cc) *********************************************************/
 .preset-card-label { font-size: 0.85em; }

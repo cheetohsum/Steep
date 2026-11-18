@@ -1903,6 +1903,7 @@ bool SpotEntry::operator ==(const SpotEntry& other) const
            other.radius == radius && other.feather == feather && other.opacity == opacity &&
            other.method == method && other.repairVersion == repairVersion && other.strokePoints == strokePoints &&
            other.objectPoints == objectPoints && other.objectGrow == objectGrow && other.objectShadow == objectShadow &&
+           other.objectSize == objectSize &&
            other.highQuality == highQuality;
 }
 
@@ -5311,10 +5312,16 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
                 saveToKeyfile(!pedited || pedited->spot.entries, "Spot removal", strokeKey.str(), strokeData, keyFile);
             }
 
-            // Picked object: grow;shadow, then x;y;include per click.
+            // Picked object: grow;shadow, then x;y;include per click. A
+            // chosen size is a third leading value, written only when set so
+            // that files without one stay as they were; the reader tells the
+            // two layouts apart by the count (2 + 3n against 3 + 3n).
             if (!spot.entries.at(i).objectPoints.empty()) {
                 const auto& se = spot.entries.at(i);
                 std::vector<double> objectData {double(se.objectGrow), se.objectShadow ? 1. : 0.};
+                if (se.objectSize != 0) {
+                    objectData.push_back(double(se.objectSize));
+                }
                 for (const auto& pt : se.objectPoints) {
                     objectData.push_back(double(pt.x));
                     objectData.push_back(double(pt.y));
@@ -6743,7 +6750,11 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                         if (objectData.size() >= 5) {
                             se.objectGrow = LIM(float(objectData.data()[0]), 0.f, 10.f);
                             se.objectShadow = objectData.data()[1] > 0.5;
-                            for (size_t oi = 2; oi + 2 < objectData.size(); oi += 3) {
+                            const size_t header = objectData.size() % 3 == 0 ? 3 : 2;
+                            if (header == 3) {
+                                se.objectSize = LIM(int(objectData.data()[2] + epsilon), 0, 3);
+                            }
+                            for (size_t oi = header; oi + 2 < objectData.size(); oi += 3) {
                                 SpotEntry::ObjectPoint pt;
                                 pt.x = int(objectData.data()[oi] + epsilon);
                                 pt.y = int(objectData.data()[oi + 1] + epsilon);

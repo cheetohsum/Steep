@@ -23,9 +23,20 @@ public:
     SamSelector(const SamSelector&) = delete;
     SamSelector& operator=(const SamSelector&) = delete;
 
-    // Directory holding sam2_encoder.onnx and sam2_decoder.onnx; set once by rtengine::init.
+    // Directory holding sam2_encoder.onnx and sam2_decoder.onnx. May change
+    // while running (Preferences > AI models): the loaded model and every
+    // cached image encoding are dropped, and the next selection loads anew.
     void setModelDirectory(const Glib::ustring& directory);
     bool available() const;
+    // Identifies the model in use, for caches of what it selected.
+    std::string modelTag() const;
+
+    // The decoder's three nested candidates, smallest first: the share of
+    // the picture each covers and the model's own estimate of its quality.
+    struct Candidates {
+        std::array<float, 3> share {{0.f, 0.f, 0.f}};
+        std::array<float, 3> score {{0.f, 0.f, 0.f}};
+    };
 
     // Prompts are normalised source coordinates with label 1 include / 0
     // exclude. Returns a 0..1 mask over the source's pixel grid, or an empty
@@ -38,7 +49,7 @@ public:
     // its own outline rather than whatever part or group the clicks suggest.
     array2D<float> select(const Imagefloat& source, const std::string& sourceId,
                           const std::vector<std::array<float, 3>>& prompts, int candidate = -1,
-                          const array2D<float>* reference = nullptr);
+                          const array2D<float>* reference = nullptr, Candidates* candidates = nullptr);
 
 private:
     SamSelector();

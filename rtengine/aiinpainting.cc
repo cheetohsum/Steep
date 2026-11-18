@@ -18,12 +18,16 @@
 #ifdef RT_AI_MASKING
 
 #include "aiinpainting.h"
+#include "onnxdims.h"
 #include "aiidlereaper.h"
 #include "onnxruntime_compat.h"
 #include "repairmath.h"
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 #include <algorithm>
+#include <glib.h>
 #include <atomic>
 #include <cmath>
 #include <condition_variable>
@@ -97,6 +101,77 @@ struct AIInpaintingEngine::Impl {
     std::atomic<long long> lastUse{0};
     int reaperId = -1;
 
+    // A model file exported at a fixed 512x512 (what the in-app download and
+    // most copies in circulation are) is the same network as the free-size
+    // one; only its declared input size differs. Rather than ask for a new
+    // 200 MB file, those declarations are rewritten in memory as the model
+    // is loaded (onnxdims.h). -1 not looked at yet, 0 load the file as it
+    // is, 1 rewrite it. Set back to 0 if the rewritten model then fails to
+    // run at another size (see inpaintV2).
+    int freeDimsRewrite = -1;
+
+    // Builds the session for `path`. Caller holds inferenceMutex (or is the
+    // one-off init).
+    OrtStatus* createSession(const std::string& path)
+    {
+        if (freeDimsRewrite != 0 && !std::getenv("STEEP_LAMA_KEEP_FIXED")) {
+            gchar* contents = nullptr;
+            gsize length = 0;
+            std::string rewritten;
+            if (g_file_get_contents(path.c_str(), &contents, &length, nullptr)) {
+                const std::string original(contents, length);
+                g_free(contents);
+                if (onnxFreeImageDimensions(original, rewritten)) {
+                    OrtStatus* status = api->CreateSessionFromArray(env, rewritten.data(), rewritten.size(),
+                                                                    sessionOptions, &session);
+                    if (!status) {
+                        if (freeDimsRewrite < 0) {
+                            fprintf(stderr, "AI Inpainting: fixed-size model opened for any size\n");
+                        }
+                        freeDimsRewrite = 1;
+                        return nullptr;
+                    }
+                    fprintf(stderr, "AI Inpainting: could not open the model for any size (%s); using it as exported\n",
+                            api->GetErrorMessage(status));
+                    api->ReleaseStatus(status);
+                    session = nullptr;
+                }
+            }
+            freeDimsRewrite = 0;
+        }
+#ifdef _WIN32
+        const int wlen = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
+        std::vector<wchar_t> wpath(wlen);
+        MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wpath.data(), wlen);
+        return api->CreateSession(env, wpath.data(), sessionOptions, &session);
+#else
+        return api->CreateSession(env, path.c_str(), sessionOptions, &session);
+#endif
+    }
+
+    // Reads the declared input size of the loaded session.
+    bool readInputContract()
+    {
+        OrtTypeInfo* inputType = nullptr;
+        const OrtTensorTypeAndShapeInfo* tensorType = nullptr;
+        int64_t dims[4] = {};
+        size_t rank = 0;
+        OrtStatus* status = api->SessionGetInputTypeInfo(session, 0, &inputType);
+        if (!status) status = api->CastTypeInfoToTensorInfo(inputType, &tensorType);
+        if (!status && tensorType) status = api->GetDimensionsCount(tensorType, &rank);
+        if (!status && rank == 4) status = api->GetDimensions(tensorType, dims, 4);
+        if (inputType) api->ReleaseTypeInfo(inputType);
+        if (status || rank != 4 || dims[1] != 3 || dims[2] > 2048 || dims[3] > 2048) {
+            if (status) api->ReleaseStatus(status);
+            return false;
+        }
+        inputHeight = dims[2] > 0 ? int(dims[2]) : 512;
+        inputWidth = dims[3] > 0 ? int(dims[3]) : 512;
+        freeInputSize = dims[2] <= 0 && dims[3] <= 0;
+        dynamicDims = dims[2] > 0 && dims[3] > 0 ? 0 : -1;
+        return true;
+    }
+
     // Caller holds inferenceMutex.
     bool loadSessionLocked()
     {
@@ -106,14 +181,7 @@ struct AIInpaintingEngine::Impl {
         if (!api || !env || !sessionOptions || modelPath.empty()) {
             return false;
         }
-#ifdef _WIN32
-        const int wlen = MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, nullptr, 0);
-        std::vector<wchar_t> wpath(wlen);
-        MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, wpath.data(), wlen);
-        OrtStatus* status = api->CreateSession(env, wpath.data(), sessionOptions, &session);
-#else
-        OrtStatus* status = api->CreateSession(env, modelPath.c_str(), sessionOptions, &session);
-#endif
+        OrtStatus* status = createSession(modelPath);
         if (status) {
             fprintf(stderr, "AI Inpainting: failed to reload model: %s\n", api->GetErrorMessage(status));
             api->ReleaseStatus(status);
@@ -211,14 +279,7 @@ bool AIInpaintingEngine::init(const std::string& modelPath)
     }
     pImpl->api->SetSessionGraphOptimizationLevel(pImpl->sessionOptions, ORT_ENABLE_EXTENDED);
 
-#ifdef _WIN32
-    const int wlen = MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, nullptr, 0);
-    std::vector<wchar_t> wpath(wlen);
-    MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, wpath.data(), wlen);
-    status = pImpl->api->CreateSession(pImpl->env, wpath.data(), pImpl->sessionOptions, &pImpl->session);
-#else
-    status = pImpl->api->CreateSession(pImpl->env, modelPath.c_str(), pImpl->sessionOptions, &pImpl->session);
-#endif
+    status = pImpl->createSession(modelPath);
     if (status) {
         const char* msg = pImpl->api->GetErrorMessage(status);
         fprintf(stderr, "AI Inpainting: Failed to load model: %s\n", msg);
@@ -232,24 +293,10 @@ bool AIInpaintingEngine::init(const std::string& modelPath)
         return false;
     }
 
-    OrtTypeInfo* inputType = nullptr;
-    const OrtTensorTypeAndShapeInfo* tensorType = nullptr;
-    int64_t dims[4] = {};
-    size_t rank = 0;
-    status = pImpl->api->SessionGetInputTypeInfo(pImpl->session, 0, &inputType);
-    if (!status) status = pImpl->api->CastTypeInfoToTensorInfo(inputType, &tensorType);
-    if (!status && tensorType) status = pImpl->api->GetDimensionsCount(tensorType, &rank);
-    if (!status && rank == 4) status = pImpl->api->GetDimensions(tensorType, dims, 4);
-    if (inputType) pImpl->api->ReleaseTypeInfo(inputType);
-    if (status || rank != 4 || dims[1] != 3 || dims[2] > 2048 || dims[3] > 2048) {
-        if (status) pImpl->api->ReleaseStatus(status);
+    if (!pImpl->readInputContract()) {
         fprintf(stderr, "AI Inpainting: unsupported model input contract\n");
         return false;
     }
-    pImpl->inputHeight = dims[2] > 0 ? int(dims[2]) : 512;
-    pImpl->inputWidth = dims[3] > 0 ? int(dims[3]) : 512;
-    pImpl->freeInputSize = dims[2] <= 0 && dims[3] <= 0;
-    pImpl->dynamicDims = dims[2] > 0 && dims[3] > 0 ? 0 : -1;
     pImpl->modelPath = modelPath;
     pImpl->lastUse = AIIdleReaper::nowMs();
     pImpl->initialized = true;
@@ -678,7 +725,20 @@ bool AIInpaintingEngine::inpaintV2(const float* r, const float* g, const float* 
         // A small neutral is enough when the export takes any size.
         if (!bind(native ? 256 : mw, native ? 256 : mh)) return false;
         std::fill(input.begin(), input.end(), .25f);
-        if (!infer()) return false;
+        if (!infer()) {
+            if (native && pImpl->freeDimsRewrite == 1) {
+                // This export does not take other sizes after all (a shape
+                // baked into its graph, not just declared). Back to the
+                // file as exported, at its own size.
+                fprintf(stderr, "AI Inpainting: the model only runs at its exported size; using that\n");
+                pImpl->freeDimsRewrite = 0;
+                api->ReleaseSession(pImpl->session);
+                pImpl->session = nullptr;
+                if (!pImpl->loadSessionLocked() || !pImpl->readInputContract() || pImpl->freeInputSize) return false;
+                return inpaintV2(r, g, b, mask, w, h, outR, outG, outB, version, job);
+            }
+            return false;
+        }
         float* data = nullptr;
         if (!check(api->GetTensorMutableData(run.output, reinterpret_cast<void**>(&data)))) return false;
         const int samples = 3 * boundW * boundH;

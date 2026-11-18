@@ -804,6 +804,11 @@ void Options::setDefaults()
     sortMethod = SORT_BY_NAME;
     sortDescending = false;
     rtSettings.lensfunDbDirectory = ""; // set also in main.cc and main-cli.cc
+    rtSettings.aiModelScene = "";
+    rtSettings.aiModelSubject = "";
+    rtSettings.aiModelSelect = "";
+    rtSettings.aiModelWideFill = "";
+    rtSettings.aiKeepLoaded = false;
     cropGuides = CROP_GUIDE_FULL;
     cropAutoFit = false;
 
@@ -2811,6 +2816,21 @@ void Options::readFromFile(Glib::ustring fname)
                 }
             }
 
+            if (keyFile.has_group("AI Models")) {
+                const auto model = [&keyFile](const char* key, Glib::ustring& value) {
+                    if (keyFile.has_key("AI Models", key)) {
+                        value = keyFile.get_string("AI Models", key);
+                    }
+                };
+                model("Scene", rtSettings.aiModelScene);
+                model("Subject", rtSettings.aiModelSubject);
+                model("Select", rtSettings.aiModelSelect);
+                model("WideFill", rtSettings.aiModelWideFill);
+                if (keyFile.has_key("AI Models", "KeepLoaded")) {
+                    rtSettings.aiKeepLoaded = keyFile.get_boolean("AI Models", "KeepLoaded");
+                }
+            }
+
             if (keyFile.has_group("Lensfun")) {
                 if (keyFile.has_key("Lensfun", "DBDirectory")) {
                     rtSettings.lensfunDbDirectory = keyFile.get_string("Lensfun", "DBDirectory");
@@ -3403,6 +3423,12 @@ Glib::ustring Options::serializeKeyFile()
         keyFile.set_boolean("Dialogs", "GimpPluginShowInfoDialog", gimpPluginShowInfoDialog);
 
         keyFile.set_string("Lensfun", "DBDirectory", rtSettings.lensfunDbDirectory);
+
+        keyFile.set_string("AI Models", "Scene", rtSettings.aiModelScene);
+        keyFile.set_string("AI Models", "Subject", rtSettings.aiModelSubject);
+        keyFile.set_string("AI Models", "Select", rtSettings.aiModelSelect);
+        keyFile.set_string("AI Models", "WideFill", rtSettings.aiModelWideFill);
+        keyFile.set_boolean("AI Models", "KeepLoaded", rtSettings.aiKeepLoaded);
 
         switch (rtSettings.xmp_sidecar_style) {
         case rtengine::Settings::XmpSidecarStyle::EXT:

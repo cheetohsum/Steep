@@ -64,6 +64,31 @@ public:
 };
 
 /**
+ * @brief What a Remove Object click selected, painted over the picture while
+ * the fill is computed: the object tinted and outlined, the margin that is
+ * replaced along with it tinted more faintly. Without it a pick removed
+ * whatever the selection model chose, sight unseen.
+ */
+class ObjectPickOverlay final : public Geometry
+{
+public:
+    void setReport (const rtengine::SmartRepairReport& report);
+    void clear ();
+    bool hasGrid () const { return bool(surface_); }
+    int clickX () const { return clickX_; }
+    int clickY () const { return clickY_; }
+
+    void drawOuterGeometry (Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem) override;
+    void drawInnerGeometry (Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem) override;
+    void drawToMOChannel (Cairo::RefPtr<Cairo::Context> &cr, unsigned short id, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem) override;
+
+private:
+    Cairo::RefPtr<Cairo::ImageSurface> surface_;
+    int x_ = 0, y_ = 0, width_ = 0, height_ = 0;   // picture rectangle the surface covers
+    int clickX_ = -1, clickY_ = -1;
+};
+
+/**
  * @brief Let the user create/edit/delete points for Spot Removal tool
  */
 
@@ -141,6 +166,15 @@ private:
     // Large fills through the diffusion remover, when its models are installed.
     Gtk::CheckButton* highQuality_ = nullptr;
     Adjuster* objectGrow_ = nullptr;
+    // Part / object / group: which of the selector's readings a pick takes.
+    Gtk::ComboBoxText* objectSize_ = nullptr;
+    sigc::connection objectSizeConn_;
+    // Why the last large fill did not use the high-quality model, if so.
+    Gtk::Label* fillNote_ = nullptr;
+    ObjectPickOverlay objectOverlay_;
+    unsigned int reportSerial_ = 0;
+    void applyRepairReport(const rtengine::SmartRepairReport& report);
+    void syncHighQualityAvailability();
     int strokeModifier_ = 0;             // modifier keys held when the stroke began
     /// The newest Remove Object entry made by picking, or null.
     rtengine::procparams::SpotEntry* lastPickedObject();

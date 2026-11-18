@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <vector>
 
 namespace rtengine {
 
@@ -63,5 +64,70 @@ public:
 };
 
 using SmartRepairJob = std::shared_ptr<SmartRepairControl>;
+
+// What the latest smart repair selected and how it was filled, for the tool
+// panel to show. Like the status above it is written by the engine and
+// polled by the UI: `serial` moves whenever anything here changes.
+struct SmartRepairReport {
+    unsigned int serial = 0;
+
+    // The object a Remove Object click picked, as a coverage grid over a
+    // rectangle of the picture in spot coordinates: 255 on the object, 128
+    // in the margin that is replaced with it, 0 outside. Empty when the
+    // latest repair picked nothing.
+    int clickX = -1, clickY = -1;                 // the entry's first click
+    int x = 0, y = 0, width = 0, height = 0;      // rectangle, full-size pixels
+    int gridWidth = 0, gridHeight = 0;
+    std::shared_ptr<const std::vector<unsigned char>> grid;
+    // Which of the selector's nested candidates was taken (0 smallest), and
+    // whether a smaller or a larger one exists for the user to ask for.
+    int candidate = -1;
+    bool hasSmaller = false, hasLarger = false;
+
+    enum class Fill { None, Standard, Wide, WideSkippedMemory, WideFailed };
+    Fill fill = Fill::None;
+    float neededGb = 0.f, freeGb = 0.f;           // for WideSkippedMemory
+};
+
+class SmartRepairReports {
+    struct State {
+        std::mutex mutex;
+        SmartRepairReport report;
+    };
+    static State& state() {
+        static State* const s = new State();
+        return *s;
+    }
+public:
+    static SmartRepairReport get() {
+        State& s = state();
+        std::lock_guard<std::mutex> lock(s.mutex);
+        return s.report;
+    }
+    static void setObject(const SmartRepairReport& object) {
+        State& s = state();
+        std::lock_guard<std::mutex> lock(s.mutex);
+        const unsigned int serial = s.report.serial + 1;
+        const auto fill = s.report.fill;
+        const float needed = s.report.neededGb, free = s.report.freeGb;
+        s.report = object;
+        s.report.serial = serial;
+        s.report.fill = fill;
+        s.report.neededGb = needed;
+        s.report.freeGb = free;
+    }
+    static void clearObject() {
+        SmartRepairReport none;
+        setObject(none);
+    }
+    static void setFill(SmartRepairReport::Fill fill, float neededGb = 0.f, float freeGb = 0.f) {
+        State& s = state();
+        std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.report.serial;
+        s.report.fill = fill;
+        s.report.neededGb = neededGb;
+        s.report.freeGb = freeGb;
+    }
+};
 
 }

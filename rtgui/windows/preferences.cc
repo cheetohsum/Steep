@@ -16,6 +16,7 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <iomanip>
 #include <sstream>
 
 #include <glibmm/miscutils.h>
@@ -35,6 +36,7 @@
 #include "splash.h"
 #include "toollocationpref.h"
 
+#include "rtengine/aimodels.h"
 #include "rtengine/dfmanager.h"
 #include "rtengine/ffmanager.h"
 #include "rtengine/iccstore.h"
@@ -176,6 +178,7 @@ Preferences::Preferences(RTWindow *rtwindow)
     addPage(getColorManPanel(), M("PREFERENCES_TAB_COLORMGR"), "gamut-plus");
     addPage(getBatchProcPanel(), M("PREFERENCES_BATCH_PROCESSING"), "nav-queue");
     addPage(getPerformancePanel(), M("PREFERENCES_TAB_PERFORMANCE"), "gears");
+    addPage(getAIModelsPanel(), M("PREFERENCES_TAB_AIMODELS"), "mask-ai");
     // Sounds only on Windows and Linux
 #if defined(_WIN32) || defined(__linux__)
     addPage(getSoundsPanel(), M("PREFERENCES_TAB_SOUND"), "info");
@@ -970,6 +973,99 @@ Gtk::Widget* Preferences::getPerformancePanel()
     swPerformance->add(*vbPerformance);
 
     return swPerformance;
+}
+
+Gtk::Widget* Preferences::getAIModelsPanel()
+{
+    namespace aimodels = rtengine::aimodels;
+
+    Gtk::ScrolledWindow* const scrolled = Gtk::manage(new Gtk::ScrolledWindow());
+    scrolled->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+    Gtk::Box* const page = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 8));
+
+    Gtk::Label* const intro = Gtk::manage(new Gtk::Label(M("PREFERENCES_AIMODELS_INTRO"), Gtk::ALIGN_START));
+    intro->set_line_wrap(true);
+    intro->set_xalign(0.f);
+    intro->set_max_width_chars(80);
+    page->pack_start(*intro, Gtk::PACK_SHRINK, 4);
+
+    Gtk::Frame* const frame = Gtk::manage(new Gtk::Frame(M("PREFERENCES_AIMODELS_FRAME")));
+    frame->set_label_align(0.025, 0.5);
+    Gtk::Grid* const grid = Gtk::manage(new Gtk::Grid());
+    grid->set_row_spacing(4);
+    grid->set_column_spacing(12);
+    grid->set_border_width(8);
+
+    const auto megabytes = [](long long mb) {
+        return mb >= 1000
+            ? Glib::ustring::compose("%1 GB", Glib::ustring::format(std::fixed, std::setprecision(1), mb / 1000.0))
+            : Glib::ustring::compose("%1 MB", mb);
+    };
+    int row = 0;
+    // A chooser: "Automatic" (id "auto": whatever is best of what is
+    // installed), then every installed model by name and size. With nothing
+    // installed the row says so and where the files go.
+    const auto chooser = [&](Gtk::ComboBoxText*& combo, aimodels::Role role, const char* labelKey, const char* tipKey,
+                             bool nextStart) {
+        Glib::ustring text = M(labelKey);
+        if (nextStart) {
+            text += Glib::ustring(" (") + M("PREFERENCES_APPLNEXTSTARTUP") + ")";
+        }
+        Gtk::Label* const label = Gtk::manage(new Gtk::Label(text, Gtk::ALIGN_START));
+        label->set_tooltip_text(M(tipKey));
+        combo = Gtk::manage(new Gtk::ComboBoxText());
+        combo->set_hexpand(true);
+        combo->set_tooltip_text(M(tipKey));
+        const auto installed = aimodels::installed(role);
+        if (installed.empty()) {
+            combo->append("auto", M("PREFERENCES_AIMODELS_NONE"));
+            combo->set_sensitive(false);
+        } else if (role == aimodels::Role::WideFill) {
+            combo->append("auto", Glib::ustring::compose(M("PREFERENCES_AIMODELS_ON"), installed.front().name,
+                                                         megabytes(installed.front().megabytes)));
+            combo->append(aimodels::kOff, M("PREFERENCES_AIMODELS_OFF"));
+        } else {
+            combo->append("auto", Glib::ustring::compose(M("PREFERENCES_AIMODELS_AUTO"), installed.front().name));
+            for (const auto& choice : installed) {
+                combo->append(choice.id, Glib::ustring::compose("%1  \u2014  %2", choice.name, megabytes(choice.megabytes)));
+            }
+        }
+        combo->set_active_id("auto");
+        grid->attach(*label, 0, row, 1, 1);
+        grid->attach(*combo, 1, row, 1, 1);
+        ++row;
+    };
+    chooser(aiModelScene, aimodels::Role::Scene, "PREFERENCES_AIMODELS_SCENE", "PREFERENCES_AIMODELS_SCENE_TIP", true);
+    chooser(aiModelSubject, aimodels::Role::Subject, "PREFERENCES_AIMODELS_SUBJECT", "PREFERENCES_AIMODELS_SUBJECT_TIP", true);
+    chooser(aiModelSelect, aimodels::Role::Select, "PREFERENCES_AIMODELS_SELECT", "PREFERENCES_AIMODELS_SELECT_TIP", false);
+    chooser(aiModelWideFill, aimodels::Role::WideFill, "PREFERENCES_AIMODELS_WIDEFILL", "PREFERENCES_AIMODELS_WIDEFILL_TIP", false);
+    frame->add(*grid);
+    page->pack_start(*frame, Gtk::PACK_SHRINK, 4);
+
+    Gtk::Frame* const memoryFrame = Gtk::manage(new Gtk::Frame(M("PREFERENCES_AIMODELS_MEMORY")));
+    memoryFrame->set_label_align(0.025, 0.5);
+    Gtk::Box* const memoryBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    memoryBox->set_border_width(8);
+    aiKeepLoaded = Gtk::manage(new Gtk::CheckButton(M("PREFERENCES_AIMODELS_KEEP")));
+    aiKeepLoaded->set_tooltip_text(M("PREFERENCES_AIMODELS_KEEP_TIP"));
+    memoryBox->pack_start(*aiKeepLoaded, Gtk::PACK_SHRINK);
+    memoryFrame->add(*memoryBox);
+    page->pack_start(*memoryFrame, Gtk::PACK_SHRINK, 4);
+
+    // Where the files live, so a model can be added by hand.
+    Gtk::Label* const where = Gtk::manage(new Gtk::Label(Glib::ustring::compose(
+        M("PREFERENCES_AIMODELS_FOLDERS"),
+        Glib::build_filename(App::get().argv0(), "models"),
+        Glib::build_filename(Options::rtdir, "models")), Gtk::ALIGN_START));
+    where->set_line_wrap(true);
+    where->set_xalign(0.f);
+    where->set_selectable(true);
+    where->set_max_width_chars(80);
+    where->get_style_context()->add_class("dim-label");
+    page->pack_start(*where, Gtk::PACK_SHRINK, 4);
+
+    scrolled->add(*page);
+    return scrolled;
 }
 
 Gtk::Widget* Preferences::getColorManPanel ()
@@ -2248,6 +2344,21 @@ void Preferences::storePreferences()
     moptions.maxInspectorBuffers = maxInspectorBuffersSB->get_value_as_int();
     moptions.rtSettings.thumbnail_inspector_mode = static_cast<rtengine::Settings::ThumbnailInspectorMode>(thumbnailInspectorMode->get_active_row_number());
 
+    {
+        const auto chosen = [](Gtk::ComboBoxText* combo, Glib::ustring& value) {
+            // An insensitive chooser means nothing is installed: keep what
+            // was stored, so installing the model later restores the choice.
+            if (!combo || !combo->get_sensitive()) return;
+            const Glib::ustring id = combo->get_active_id();
+            value = id == "auto" ? Glib::ustring() : id;
+        };
+        chosen(aiModelScene, moptions.rtSettings.aiModelScene);
+        chosen(aiModelSubject, moptions.rtSettings.aiModelSubject);
+        chosen(aiModelSelect, moptions.rtSettings.aiModelSelect);
+        chosen(aiModelWideFill, moptions.rtSettings.aiModelWideFill);
+        moptions.rtSettings.aiKeepLoaded = aiKeepLoaded->get_active();
+    }
+
 // Sounds only on Windows and Linux
 #if defined(_WIN32) || defined(__linux__)
     moptions.sndEnable = ckbSndEnable->get_active();
@@ -2489,6 +2600,20 @@ void Preferences::fillPreferences()
     maxInspectorBuffersSB->set_value (moptions.maxInspectorBuffers);
     thumbnailInspectorMode->set_active(int(moptions.rtSettings.thumbnail_inspector_mode));
 
+    {
+        const auto show = [](Gtk::ComboBoxText* combo, const Glib::ustring& value) {
+            // A stored model that is no longer installed reads as automatic.
+            if (combo && (value.empty() || !combo->set_active_id(value))) {
+                combo->set_active_id("auto");
+            }
+        };
+        show(aiModelScene, moptions.rtSettings.aiModelScene);
+        show(aiModelSubject, moptions.rtSettings.aiModelSubject);
+        show(aiModelSelect, moptions.rtSettings.aiModelSelect);
+        show(aiModelWideFill, moptions.rtSettings.aiModelWideFill);
+        aiKeepLoaded->set_active(moptions.rtSettings.aiKeepLoaded);
+    }
+
     darkFrameDir->set_current_folder(moptions.rtSettings.darkFramesPath);
     darkFrameChanged();
 
@@ -2600,6 +2725,9 @@ void Preferences::okPressed()
     options.copyFrom(&moptions);
     options.filterOutParsedExtensions();
     steep::motion::applyReduceMotionSetting();
+    // Click selection and the wide fill change model at once; the scene and
+    // subject models are bound when the engine starts.
+    rtengine::aimodels::applyLive(options.rtSettings);
 
     try {
         Options::save();

@@ -1073,8 +1073,10 @@ std::uint64_t hashEntryChain(const SpotEntry& entry,
                 const int v[] = {pt.x, pt.y, pt.include ? 1 : 0};
                 h = hashInts(h, v, 3);
             }
-            const int opts[] = {static_cast<int>(e.objectGrow * 1000.f), e.objectShadow ? 1 : 0};
-            h = hashInts(h, opts, 2);
+            const int opts[] = {static_cast<int>(e.objectGrow * 1000.f), e.objectShadow ? 1 : 0, e.objectSize};
+            h = hashInts(h, opts, 3);
+            // The outline is whatever the installed selection model draws.
+            h = hashString(h, SamSelector::getInstance().modelTag());
         }
         if (e.repairVersion >= 3 && e.highQuality && AIRemoverEngine::getInstance().available()) {
             const int hq = 1;
@@ -1525,6 +1527,10 @@ struct ObjectMask {
     std::vector<float> dist;             // distance outside the object in full-res px, 0 inside
     float size = 0.f;                    // sqrt(area) in full-res px
     int x0 = 0, y0 = 0, x1 = 0, y1 = 0;  // object bounds in full-res px
+    // Which of the selector's nested readings this is (0 smallest), and
+    // whether a distinctly smaller or larger one was on offer.
+    int candidate = -1;
+    bool hasSmaller = false, hasLarger = false;
 
     float distanceAt(int fx, int fy) const
     {
@@ -1547,6 +1553,11 @@ constexpr int OBJECT_MASK_DIMENSION = 1600;
 // ground, not an object; removing it would be a surprise, so the entry falls
 // back to a plain brush dab.
 constexpr float OBJECT_MAX_FRAME_SHARE = 0.35f;
+// How far below the selector's best-rated reading a larger one may score and
+// still be taken, and the growth in area from one reading to the next that
+// counts as a jump (see getObjectMask).
+constexpr float OBJECT_SCORE_SLACK = 0.12f;
+constexpr float OBJECT_JUMP = 4.f;
 
 // Exact Euclidean distance (Felzenszwalb): one pass of lower envelopes.
 void squaredDistance1D(const float* f, float* d, int n, std::vector<int>& v, std::vector<double>& z)
@@ -1745,8 +1756,9 @@ std::shared_ptr<const ObjectMask> getObjectMask(
         const int v[] = {pt.x, pt.y, pt.include ? 1 : 0};
         key = hashInts(key, v, 3);
     }
-    const int flags[] = {entry.objectShadow ? 1 : 0, tr, fw, fh};
-    key = hashInts(key, flags, 4);
+    const int flags[] = {entry.objectShadow ? 1 : 0, tr, fw, fh, entry.objectSize};
+    key = hashInts(key, flags, 5);
+    key = hashString(key, SamSelector::getInstance().modelTag());
     key = hashDouble(key, currWB.getTemp());
     key = hashDouble(key, currWB.getGreen());
     key = hashString(key, imgsrc->getFileName().raw());
@@ -1818,32 +1830,83 @@ std::shared_ptr<const ObjectMask> getObjectMask(
     char samId[64];
     std::snprintf(samId, sizeof samId, "|spot-object|%d|%dx%d", tr, w, h);
     // One click is ambiguous between a part, the object and the group it
-    // belongs to (a click on a car door: the door, or the car). The model
-    // offers three nested candidates; its own favourite is often the part,
-    // which leaves the rest of the object standing. Removal wants the whole
-    // thing, so take the largest candidate that is still an object rather
-    // than a large share of the frame.
+    // belongs to (a click on a car door: the door, the car, or the car and
+    // the kerb it stands on). The model offers three nested readings. Its
+    // own favourite is often the part, which leaves the rest of the object
+    // standing; the largest is often the object plus whatever touches it.
+    // Removal wants the whole thing and no more: the largest reading the
+    // model itself rates about as well as its best one, as long as that is
+    // still an object rather than a large share of the frame. The user can
+    // overrule this per pick (objectSize).
     auto result = std::make_shared<ObjectMask>();
     result->key = key;
     long long area = 0;
     int taken = -1;
     std::vector<unsigned char> set;
-    const long long maxArea = static_cast<long long>(OBJECT_MAX_FRAME_SHARE * w * h);
-    for (int candidate = 2; candidate >= 0 && !clicks.empty(); --candidate) {
+    SamSelector::Candidates offered;
+    const auto reading = [&](int candidate, std::vector<unsigned char>& trial) -> long long {
         if (job) job->checkpoint();
         const array2D<float> selected = SamSelector::getInstance().select(
-            *frame, imgsrc->getFileName().raw() + samId, prompts, candidate);
-        if (selected.getWidth() != w || selected.getHeight() != h) break;
-        std::vector<unsigned char> trial(size_t(w) * h);
+            *frame, imgsrc->getFileName().raw() + samId, prompts, candidate, nullptr, &offered);
+        if (selected.getWidth() != w || selected.getHeight() != h) return -1;
+        trial.assign(size_t(w) * h, 0);
         for (int y = 0; y < h; ++y) {
             for (int x = 0; x < w; ++x) trial[size_t(y) * w + x] = selected[y][x] > .5f;
         }
-        const long long trialArea = keepClickedPieces(trial, w, h, clicks);
+        return keepClickedPieces(trial, w, h, clicks);
+    };
+    // An explicit "larger" may take more of the frame than a guess may.
+    const float maxShare = entry.objectSize ? .6f : OBJECT_MAX_FRAME_SHARE;
+    const long long maxArea = static_cast<long long>(maxShare * w * h);
+    std::vector<int> order;
+    if (entry.objectSize >= 1 && entry.objectSize <= 3) {
+        // As asked; when that reading is unusable, the next smaller ones.
+        for (int candidate = entry.objectSize - 1; candidate >= 0; --candidate) order.push_back(candidate);
+    } else {
+        order = {2, 1, 0};
+    }
+    bool judged = false;
+    for (size_t i = 0; i < order.size() && !clicks.empty(); ++i) {
+        const int candidate = order[i];
+        std::vector<unsigned char> trial;
+        const long long trialArea = reading(candidate, trial);
+        if (trialArea < 0) break;
+        if (!entry.objectSize && !judged) {
+            // The scores are known after the first decode: drop the readings
+            // the model trusts clearly less than its best. A much larger
+            // reading needs to be nearly as good as the best to be taken --
+            // that jump in size is where "the object" turns into "the object
+            // and its surroundings".
+            judged = true;
+            const float best = std::max({offered.score[0], offered.score[1], offered.score[2]});
+            std::vector<int> kept;
+            for (int c = 2; c >= 0; --c) {
+                float slack = OBJECT_SCORE_SLACK;
+                if (c > 0 && offered.share[c] > OBJECT_JUMP * std::max(offered.share[c - 1], 1e-5f)) slack *= .35f;
+                if (offered.score[c] >= best - slack) kept.push_back(c);
+            }
+            for (int c = 2; c >= 0; --c) {
+                if (std::find(kept.begin(), kept.end(), c) == kept.end()) kept.push_back(c);
+            }
+            order = kept;
+            if (order[0] != candidate) {
+                i = size_t(-1);   // start over in the judged order
+                continue;
+            }
+        }
         if (trialArea >= 9 && trialArea <= maxArea) {
             set = std::move(trial);
             area = trialArea;
             taken = candidate;
             break;
+        }
+    }
+    if (taken >= 0) {
+        result->candidate = taken;
+        const float mine = std::max(offered.share[taken], 1e-5f);
+        for (int c = 0; c < 3; ++c) {
+            if (c < taken && offered.share[c] < .8f * mine) result->hasSmaller = true;
+            if (c > taken && offered.share[c] > 1.25f * mine && offered.share[c] <= .6f) result->hasLarger = true;
         }
     }
     frame.reset();
@@ -1874,10 +1937,13 @@ std::shared_ptr<const ObjectMask> getObjectMask(
         result->size = std::sqrt(float(area)) * skip;
     }
     if (edittrace::enabled()) {
-        edittrace::logf("[aiPatch] object pick points=%zu grid=%dx%d candidate=%d share=%.3f shadow=%d usable=%d %.0fms",
+        edittrace::logf("[aiPatch] object pick points=%zu grid=%dx%d candidate=%d share=%.3f shadow=%d usable=%d %.0fms"
+                        " offered share=%.4f/%.4f/%.4f score=%.3f/%.3f/%.3f asked=%d",
                         entry.objectPoints.size(), w, h, taken, double(area) / (double(w) * h),
                         entry.objectShadow ? 1 : 0, usable ? 1 : 0,
-                        (edittrace::nowUs() - traceStartUs) / 1000.0);
+                        (edittrace::nowUs() - traceStartUs) / 1000.0,
+                        offered.share[0], offered.share[1], offered.share[2],
+                        offered.score[0], offered.score[1], offered.score[2], entry.objectSize);
     }
     if (const char* dump = std::getenv("STEEP_SPOT_OBJECT_DUMP")) {
         // Debug: the picked outline as a PGM (white = object, grey = within 5% growth).
@@ -1992,6 +2058,11 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
     if (entry.repairVersion >= 2 && !entry.objectPoints.empty()) {
         object = getObjectMask(imgsrc, entry, currWB, tr, params, fw, fh, lock, job);
     }
+    if (!object) {
+        SmartRepairReports::clearObject();
+    }
+    // Until the wide fill says otherwise.
+    SmartRepairReports::setFill(SmartRepairReport::Fill::Standard);
 
     int bx0 = INT_MAX, by0 = INT_MAX, bx1 = INT_MIN, by1 = INT_MIN;
     int pad = int(featherRadius * 2);
@@ -2002,6 +2073,33 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
         objectGrow = std::max({6.f, 1.5f * object->skip, entry.objectGrow / 100.f * object->size});
         objectRamp = std::max(2.f, entry.feather * .06f * object->size);
         const int reach = int(objectGrow + objectRamp) + 2;
+        {
+            // For the canvas: the outline and the margin replaced with it.
+            SmartRepairReport picked;
+            const int skip = object->skip;
+            const int gx0 = std::max(0, (object->x0 - reach) / skip), gy0 = std::max(0, (object->y0 - reach) / skip);
+            const int gx1 = std::min(object->w - 1, (object->x1 + reach) / skip), gy1 = std::min(object->h - 1, (object->y1 + reach) / skip);
+            picked.clickX = entry.objectPoints.front().x;
+            picked.clickY = entry.objectPoints.front().y;
+            picked.gridWidth = gx1 - gx0 + 1;
+            picked.gridHeight = gy1 - gy0 + 1;
+            picked.x = gx0 * skip;
+            picked.y = gy0 * skip;
+            picked.width = picked.gridWidth * skip;
+            picked.height = picked.gridHeight * skip;
+            auto grid = std::make_shared<std::vector<unsigned char>>(size_t(picked.gridWidth) * picked.gridHeight);
+            for (int y = gy0; y <= gy1; ++y) {
+                for (int x = gx0; x <= gx1; ++x) {
+                    const float d = object->dist[size_t(y) * object->w + x];
+                    (*grid)[size_t(y - gy0) * picked.gridWidth + (x - gx0)] = d <= 0.f ? 255 : d <= objectGrow ? 128 : 0;
+                }
+            }
+            picked.grid = grid;
+            picked.candidate = object->candidate;
+            picked.hasSmaller = object->hasSmaller;
+            picked.hasLarger = object->hasLarger;
+            SmartRepairReports::setObject(picked);
+        }
         bx0 = object->x0 - reach;
         by0 = object->y0 - reach;
         bx1 = object->x1 + reach;

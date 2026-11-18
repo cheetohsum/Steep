@@ -325,6 +325,13 @@ class Preferences final :
     Gtk::Widget *getColorManPanel();
     Gtk::Widget *getBatchProcPanel();
     Gtk::Widget *getPerformancePanel();
+    Gtk::Widget *getAIModelsPanel();
+    // One chooser per job that has more than one model (rtengine/aimodels.h).
+    Gtk::ComboBoxText* aiModelScene = nullptr;
+    Gtk::ComboBoxText* aiModelSubject = nullptr;
+    Gtk::ComboBoxText* aiModelSelect = nullptr;
+    Gtk::ComboBoxText* aiModelWideFill = nullptr;
+    Gtk::CheckButton* aiKeepLoaded = nullptr;
     Gtk::Widget *getSoundsPanel();
 
 public:
