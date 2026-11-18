@@ -60,7 +60,7 @@ ENUMS = {"Process": {"auto", "c41", "e6", "ecn2", "bw"},
 # Sections a layer file may carry. Nothing here places exposure or colour balance.
 LAYER_SECTIONS = {"Grain", "Light Effects", "PCVignette", "Clarity", "Texture"}
 # Sections a graded look may carry.
-LOOK_SECTIONS = LAYER_SECTIONS | {"Film Presets", "Color Grading", "Luminance Curve"}
+LOOK_SECTIONS = LAYER_SECTIONS | {"Film Presets", "Color Grading", "Luminance Curve", "Black & White"}
 FORBIDDEN_WORDS = re.compile(
     r"\b(kodak|fuji\w*|portra|velvia|provia|ektar|ektachrome|kodachrome|tri-?x|ilford|hp5|delta|agfa|"
     r"cinestill|polaroid|leica|canon|nikon|sony|hasselblad|technicolor|arri|alexa)\b", re.I)
@@ -103,8 +103,8 @@ def graded_look_text(look):
             raise SystemExit("%s: unknown Film Lab key %s" % (look["name"], key))
         values[key] = value
     out = ["# %s" % look["note"],
-           "# Graded look: owns Film Lab, colour grading and the Lab curve, plus the finish sections",
-           "# listed below. It never sets exposure, white balance, crop or lens corrections.",
+           "# Graded look: owns Film Lab, colour grading, the Lab curve and the Black-and-White switch,",
+           "# plus the finish sections listed below. It never sets exposure, white balance, crop or lens corrections.",
            "# Apply with the fill option off so the rest of the edit is kept.",
            "", "[Film Presets]"]
     out += ["%s=%s" % (key, values[key]) for key, _ in FILM_DEFAULTS if key not in ("Exposure", "PrintExposure")]
@@ -138,11 +138,13 @@ def graded_look_text(look):
         out += ["", "[Clarity]", "Enabled=true", "Radius=100", "Amount=%d" % look["clarity"]]
     if "texture" in look:
         out += ["", "[Texture]", "Enabled=true", "Radius=20", "Amount=%d" % look["texture"]]
+    # Film Lab carries the picture's earlier colour edits (the master RGB curve among them) over
+    # to its own output channel by channel, which puts colour back into a monochrome stock. With
+    # the Black-and-White tool on as well the result is neutral, and the stock's lens filters
+    # still act. Colour looks switch the tool off again so a mono look leaves nothing behind.
+    out += ["", "[Black & White]", "Enabled=%s" % ("true" if is_mono(look) else "false")]
     if is_mono(look):
-        # Film Lab re-applies the master RGB curve to its own output channel by channel, which
-        # puts colour back into a monochrome stock. In luminosity mode the curve keeps its
-        # brightness and stays neutral.
-        out += ["", "[RGB Curves]", "LumaMode=true"]
+        out += ["Method=Desaturation"]
     return "\n".join(out) + "\n"
 
 
@@ -222,9 +224,9 @@ def lint(files):
                         problems.append("%s: %s=%s" % (path, key, film[key]))
                 if "Exposure" in film or "PrintExposure" in film:
                     problems.append("%s: a look must not place exposure" % path)
-            if "RGB Curves" in seen and seen["RGB Curves"] != {"LumaMode": "true"}:
-                problems.append("%s: a look may only set the RGB curve's luminosity mode" % path)
-            extra = set(seen) - (LOOK_SECTIONS | {"RGB Curves"} if film else LAYER_SECTIONS)
+            if not set(seen.get("Black & White", {})) <= {"Enabled", "Method"}:
+                problems.append("%s: a look may only switch the Black-and-White tool on or off" % path)
+            extra = set(seen) - (LOOK_SECTIONS if film else LAYER_SECTIONS)
             if extra:
                 problems.append("%s: forbidden sections %s" % (path, sorted(extra)))
     return problems

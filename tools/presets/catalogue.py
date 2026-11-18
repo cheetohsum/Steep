@@ -197,8 +197,6 @@ G = "Monochrome"
 S = "silver_gelatin"
 # The silver stock is steep: at its own contrast it blocks the shadows of a dark picture, so the
 # family sits around Contrast -30 and the hard looks are hard relative to that.
-# Toning has to come from Film Lab's own warmth and zone tints (RGB hue wheel: 30 orange,
-# 220 blue, 285 violet): colour grading runs before the film stage and a mono stock discards it.
 look(G, "Silver Classic", "silver", "A straight silver print: full range, neutral, gently toned.",
      S, Contrast=-30)
 look(G, "Silver Soft", "silver", "A long-scale print on soft paper: open shadows, gentle highlights.",
@@ -242,20 +240,15 @@ look(G, "High Key Mono", "key", "Bright and open: mid-tones lifted, contrast low
      S, Contrast=-50, lab=dict(mid=0.6, c=-0.2))
 look(G, "Low Key Mono", "key", "Dark and enclosed: mid-tones dropped, corners shaded.",
      S, Contrast=-35, lab=dict(mid=-0.35), vig=(0.3, 50))
-# toned prints
-look(G, "Selenium Tone", "toned", "Selenium-toned print: cool violet-brown shadows, neutral highlights.",
-     S, Contrast=-30, ShadowHue=285, ShadowTint=100, MidHue=285, MidTint=40)
-look(G, "Sepia Tone", "toned", "Sepia-toned print: warm brown throughout.",
-     S, Contrast=-30, Warmth=55)
-look(G, "Platinum Print", "toned", "Platinum on warm paper: very long scale, soft, faintly warm.",
-     S, Format="large", Contrast=-55, Warmth=18, lab=dict(black=0.03, white=0.97))
-look(G, "Cyanotype", "toned", "Blueprint blue from shadow to highlight.",
-     S, Contrast=-30, Warmth=-100, ShadowHue=225, ShadowTint=100, MidHue=225, MidTint=100, HighlightHue=215, HighlightTint=60,
-     lab=dict(black=0.03, white=0.94))
-look(G, "Copper and Steel", "toned", "Split-toned print: steel-blue shadows under copper highlights.",
-     S, Contrast=-30, Warmth=22, ShadowHue=225, ShadowTint=100, MidHue=28, MidTint=60, HighlightHue=28, HighlightTint=100)
-look(G, "Lith Print", "toned", "Lith development: gritty blacks, peach highlights, coarse grain.",
-     S, Contrast=-12, Warmth=25, MidHue=30, MidTint=60, HighlightHue=30, HighlightTint=100, lab=dict(white=0.96), grain=(1600, 65))
+# print character
+# Toned prints (sepia, selenium, cyanotype, split tones) are deliberately absent. Film Lab carries
+# earlier colour edits over to its output channel by channel, so a toned mono stock keeps traces
+# of the scene's colour on any Auto Edited picture; the Black-and-White tool that removes them
+# also removes the tone. They can come back once that is fixed in the engine.
+look(G, "Platinum Print", "print", "The platinum print's scale: very long, soft, grey-black shadows and quiet whites.",
+     S, Format="large", Contrast=-55, lab=dict(black=0.03, white=0.97))
+look(G, "Lith Print", "print", "Lith development: gritty, blocked blacks against delicate highlights, coarse grain.",
+     S, Contrast=-12, lab=dict(white=0.96, c=0.25, mid=0.15), grain=(1600, 65))
 
 # --------------------------------------------------------------------------------------------
 # Texture
