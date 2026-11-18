@@ -1,0 +1,10 @@
+# The grain of an everyday medium-speed film.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[Grain]
+Enabled=true
+ISO=400
+Strength=35
+Scale=100
+Color=0

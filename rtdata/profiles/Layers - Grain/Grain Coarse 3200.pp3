@@ -1,0 +1,10 @@
+# The coarsest: surveillance and concert grain.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[Grain]
+Enabled=true
+ISO=3200
+Strength=70
+Scale=100
+Color=0

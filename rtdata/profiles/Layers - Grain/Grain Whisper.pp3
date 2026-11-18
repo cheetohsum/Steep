@@ -1,0 +1,10 @@
+# Barely-there grain to take the digital edge off.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[Grain]
+Enabled=true
+ISO=200
+Strength=12
+Scale=100
+Color=0
