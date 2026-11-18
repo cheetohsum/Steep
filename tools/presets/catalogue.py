@@ -26,12 +26,21 @@ TEAL, CYAN, BLUE, VIOLET, PURPLE, MAGENTA, PINK = 205, 222, 268, 295, 315, 340, 
 
 GROUPS = {}
 
+DEFAULT_STRENGTH = {"heritage_gold": 65, "golden_hour": 70, "twilight_160": 70, "ember": 55, "porcelain_400": 85,
+                    "nostalgia_200": 85, "street_800": 80, "fade_bloom": 75, "analog_dream": 75,
+                    "vivid_chrome": 50, "desert_chrome": 55, "arctic": 65, "sovereign": 85}
+
 
 def look(group, name, family, note, stock="cinema_reveal_35", **kw):
     entry = {"name": name, "family": family, "note": note, "stock": stock}
     for key in ("cg", "lab", "grain", "fx", "vig", "clarity", "texture"):
         if key in kw:
             entry[key] = kw.pop(key)
+    # Stocks that run hot on bright skin or dark shadows are not used at full strength unless a
+    # look asks for it, and the print outputs add contrast of their own, so ease the stock's.
+    kw.setdefault("Strength", DEFAULT_STRENGTH.get(stock, 100))
+    if kw.get("Output") in ("ra4", "labscan", "projection"):
+        kw.setdefault("Contrast", -12)
     entry["film"] = kw
     GROUPS.setdefault(group, []).append(entry)
 
@@ -84,7 +93,7 @@ look(G, "Blue Streak Widescreen", "widescreen", "Cool modern anamorphic: blue sh
 look(G, "Desert Epic", "widescreen", "Wide desert vistas: golden sand, warm shadows, strong but unclipped colour.",
      "desert_chrome", Strength=60, Warmth=12, Contrast=-10, cg=dict(sh=(ORANGE, 3), hi=(AMBER, 7)), lab=dict(c=0.2))
 look(G, "Pastel Musical", "widescreen", "Soft pastel colour: lifted blacks, blush highlights, cyan in the shadows, gentle glow.",
-     "porcelain_400", Saturation=5, cg=dict(sh=(CYAN, 6), hi=(PINK, 5)), lab=dict(black=0.03, white=0.97, c=-0.3, mid=0.1), fx=dict(glow=20))
+     "porcelain_400", Saturation=5, cg=dict(sh=(CYAN, 6), hi=(PINK, 3.5)), lab=dict(black=0.03, white=0.97, c=-0.3, mid=0.1), fx=dict(glow=20))
 # print and palette pieces
 look(G, "Release Print Rich", "print", "A dense theatrical print: deep blacks, saturated mid-tones, slightly cold whites.",
      Output="cinema", Contrast=15, Saturation=8, lab=dict(c=0.3))
@@ -126,15 +135,15 @@ look(G, "1970s Drugstore Print", "period", "A corner-shop print: warm, yellow hi
 look(G, "1970s New Colour", "period", "Seventies colour documentary: muted, pale, slightly yellow, nothing dramatic.",
      "nostalgia_200", cg=dict(hi=(YELLOW, 3)), lab=dict(black=0.03, c=-0.2))
 look(G, "1970s Brown Study", "period", "Brown and orange interiors: thin colour pulled toward tobacco.",
-     "twilight_160", Saturation=-25, Warmth=12, cg=dict(gl=(ORANGE, 5)), lab=dict(black=0.04))
+     "twilight_160", Saturation=-25, Warmth=12, cg=dict(gl=(ORANGE, 3.5)), lab=dict(black=0.04))
 look(G, "1980s Flash Print", "period", "Eighties party print: hard contrast, saturated colour, blue shadows, dark corners.",
-     "heritage_gold", Output="labscan", Contrast=20, Saturation=15, cg=dict(sh=(BLUE, 4)), vig=(0.25, 50))
+     "heritage_gold", Output="labscan", Contrast=6, Saturation=15, cg=dict(sh=(BLUE, 6)), vig=(0.25, 50))
 look(G, "1980s Neon Arcade", "period", "Neon and video: blue shadows, magenta highlights, halos on every light.",
      "cinematic_500t", Backing="removed", Halation=30, Saturation=20, cg=dict(sh=(BLUE, 6), hi=(MAGENTA, 5)))
 look(G, "1990s Disposable", "period", "A one-use camera: green shadows, grey blacks, heavy corners and coarse colour grain.",
      "street_800", Output="labscan", Saturation=5, cg=dict(sh=(GREEN, 5)), lab=dict(black=0.04), vig=(0.4, 45), grain=(800, 45, 30))
 look(G, "1990s Grunge Cross", "period", "Nineties cross-processing: green overall, yellow highlights, hard edges.",
-     "sovereign", Process="e6", Contrast=10, cg=dict(hi=(YELLOW, 4), gl=(LIME, 5)))
+     "sovereign", Process="e6", Contrast=-5, cg=dict(hi=(YELLOW, 4), gl=(LIME, 5)))
 look(G, "2000s Early Digital", "period", "An early digital compact: crisp, cool, colour a notch too strong.",
      "sovereign", Strength=35, Saturation=12, Contrast=10, FilmSharpness=100, cg=dict(gl=(BLUE, 2)), texture=20)
 look(G, "2000s Minilab", "period", "A digital minilab print of the two-thousands: bright, slightly red, glossy.",
@@ -149,23 +158,23 @@ G = "Editorial"
 look(G, "Newsprint Neutral", "neutral", "Honest newspaper colour: neutral stock at part strength, colour held back a touch.",
      "sovereign", Strength=60, Saturation=-12)
 look(G, "Wire Service", "neutral", "Agency delivery: neutral colour, firm contrast, a little mid-tone bite.",
-     "sovereign", Contrast=15, clarity=12)
+     "sovereign", Contrast=4, clarity=10)
 look(G, "Magazine Neutral", "neutral", "Neutral colour printed on paper: full blacks, true skin, nothing added.",
-     "sovereign", Output="ra4")
+     "sovereign", Output="ra4", Contrast=-22)
 look(G, "Magazine Rich", "neutral", "A glossy feature spread: paper-print density with a little more colour and contrast.",
-     Output="ra4", Contrast=10, Saturation=10)
+     Output="ra4", Contrast=-4, Saturation=10)
 look(G, "Annual Report", "neutral", "Clean corporate colour: light touch, cool whites, nothing soft.",
      "sovereign", Strength=50, Saturation=5, FilmSharpness=100, cg=dict(gl=(BLUE, 1.5)))
 look(G, "Long Read Muted", "long-read", "Muted long-form colour: a third of the colour gone, soft blacks, a trace of warmth.",
      "sovereign", Saturation=-30, cg=dict(gl=(ORANGE, 1.5)), lab=dict(black=0.03))
 look(G, "Long Read Cool", "long-read", "The cool sibling: muted colour with blue in the shadows.",
-     "sovereign", Saturation=-30, Warmth=-12, cg=dict(sh=(BLUE, 3)), lab=dict(black=0.03))
+     "sovereign", Saturation=-30, Warmth=-18, cg=dict(sh=(BLUE, 7), gl=(BLUE, 1.5)), lab=dict(black=0.03))
 look(G, "Long Read Warm", "long-read", "The warm sibling: muted colour with amber in the highlights.",
-     "sovereign", Saturation=-28, Warmth=12, cg=dict(hi=(AMBER, 3)), lab=dict(black=0.03))
+     "sovereign", Saturation=-28, Warmth=20, cg=dict(hi=(AMBER, 7), gl=(AMBER, 2)), lab=dict(black=0.03))
 look(G, "Reportage Colour", "reportage", "Fast colour negative for the street: a little grit, slightly thin colour.",
      "street_800", Strength=80)
 look(G, "Reportage Pushed", "reportage", "The same stock pushed: more contrast, coarser grain.",
-     "street_800", PushPull=0.5, Contrast=10, grain=(1600, 50))
+     "street_800", PushPull=0.3, Contrast=5, grain=(1600, 50))
 look(G, "Documentary Overcast", "reportage", "Flat grey days: cool, quiet colour that keeps cloud detail.",
      "arctic", Strength=50, Saturation=-15)
 look(G, "Field Notes Green", "reportage", "Pale, slightly green field colour for land and rural work.",
@@ -175,7 +184,7 @@ look(G, "Op-Ed Portrait", "portrait", "A serious portrait for the opinion page: 
 look(G, "Photo Essay Soft", "portrait", "Gentle essay colour: soft contrast and grey-lifted blacks.",
      "porcelain_400", lab=dict(black=0.04, c=-0.3))
 look(G, "Flash on Camera", "flash", "Direct flash: hard contrast, hot colour, blue shadows, light falling off to dark corners.",
-     "heritage_gold", Output="labscan", Contrast=25, Rolloff=-40, Saturation=12, cg=dict(sh=(BLUE, 3)), vig=(0.55, 35), clarity=10)
+     "heritage_gold", Output="labscan", Contrast=8, Rolloff=-40, Saturation=12, cg=dict(sh=(BLUE, 5)), vig=(0.4, 35), clarity=10)
 look(G, "Tabloid Punch", "flash", "Loud front-page colour: slide stock at part strength with extra bite.",
      "vivid_chrome", Strength=45, Saturation=10, clarity=15)
 look(G, "Sunday Supplement", "neutral", "Weekend magazine warmth: golden stock on paper.",
@@ -186,62 +195,67 @@ look(G, "Sunday Supplement", "neutral", "Weekend magazine warmth: golden stock o
 # --------------------------------------------------------------------------------------------
 G = "Monochrome"
 S = "silver_gelatin"
+# The silver stock is steep: at its own contrast it blocks the shadows of a dark picture, so the
+# family sits around Contrast -30 and the hard looks are hard relative to that.
+# Toning has to come from Film Lab's own warmth and zone tints (RGB hue wheel: 30 orange,
+# 220 blue, 285 violet): colour grading runs before the film stage and a mono stock discards it.
 look(G, "Silver Classic", "silver", "A straight silver print: full range, neutral, gently toned.",
-     S, Contrast=-10)
+     S, Contrast=-30)
 look(G, "Silver Soft", "silver", "A long-scale print on soft paper: open shadows, gentle highlights.",
-     S, Contrast=-35, lab=dict(c=-0.15))
+     S, Contrast=-55, lab=dict(c=-0.15))
 look(G, "Silver Hard", "silver", "A hard-paper print: strong blacks, bright whites, little in between.",
-     S, Contrast=20, lab=dict(c=0.35))
+     S, Contrast=-5, lab=dict(c=0.2))
 look(G, "Chromogenic Mono", "silver", "Colour-process monochrome: smooth, low grain, long highlights.",
-     "cinema_reveal_35", Process="bw")
+     "cinema_reveal_35", Process="bw", Contrast=10)
 look(G, "Matte Mono", "silver", "Grey-black matte print: lifted blacks, soft contrast.",
-     S, Contrast=-15, lab=dict(black=0.09))
+     S, Contrast=-35, lab=dict(black=0.09))
 look(G, "Large Format Mono", "silver", "Sheet-film smoothness: fine detail, no visible grain, long tonal scale.",
-     S, Format="large", Contrast=-15, FilmSharpness=60, texture=15)
+     S, Format="large", Contrast=-40, FilmSharpness=60, texture=15)
 # documentary
-look(G, "Documentary Hard", "documentary", "Hard documentary black-and-white: orange filter, pushed, gritty and sharp.",
-     S, PushPull=0.5, Contrast=25, BWFilter="orange", grain=(800, 50), clarity=15)
-look(G, "Street Pushed", "documentary", "Fast film pushed for the street: coarse grain and deep shadows.",
-     S, PushPull=0.5, Contrast=10, grain=(1600, 60))
+look(G, "Documentary Hard", "documentary", "Hard documentary black-and-white: orange filter, gritty and sharp.",
+     S, Contrast=-12, BWFilter="orange", grain=(800, 50), clarity=12)
+look(G, "Street Pushed", "documentary", "Fast film pushed for the street: coarse grain and heavy shadows.",
+     S, PushPull=0.25, Contrast=-25, grain=(1600, 60))
 look(G, "Newsprint Mono", "documentary", "A picture as the newspaper printed it: grey blacks, dull whites, coarse grain.",
-     S, Contrast=10, lab=dict(black=0.05, white=0.95), grain=(800, 40))
-look(G, "Wire Photo Mono", "documentary", "Agency black-and-white: crisp, contrasty, made to survive reproduction.",
-     S, Contrast=20, FilmSharpness=60, clarity=15)
-look(G, "Flash Mono", "documentary", "Direct flash at night: blown foreground, black background, dark corners.",
-     S, Contrast=30, Rolloff=-40, vig=(0.6, 35))
+     S, Contrast=-20, lab=dict(black=0.06, white=0.94), grain=(800, 40))
+look(G, "Wire Photo Mono", "documentary", "Agency black-and-white: crisp and firm, made to survive reproduction.",
+     S, Contrast=-18, FilmSharpness=60, clarity=15)
+look(G, "Flash Mono", "documentary", "Direct flash at night: bright foreground, falling to dark corners.",
+     S, Contrast=-12, Rolloff=-40, vig=(0.45, 35))
 # lens filters
 look(G, "Yellow Filter Skies", "filter", "Yellow filter: skies a step darker, clouds separated, skin natural.",
-     S, BWFilter="yellow", Contrast=-10)
+     S, BWFilter="yellow", Contrast=-30)
 look(G, "Orange Filter Landscape", "filter", "Orange filter: dark skies, bright stone and foliage edges.",
-     S, BWFilter="orange", Contrast=-5)
-look(G, "Red Filter Drama", "filter", "Red filter: near-black skies, glowing skin and brick, heavy contrast.",
-     S, BWFilter="red", lab=dict(c=0.3), vig=(0.25, 55))
+     S, BWFilter="orange", Contrast=-30)
+look(G, "Red Filter Drama", "filter", "Red filter: near-black skies, glowing skin and brick.",
+     S, BWFilter="red", Contrast=-25, vig=(0.25, 55))
 look(G, "Green Filter Foliage", "filter", "Green filter: leaves and grass lifted, lips and brick darker.",
-     S, BWFilter="green", Contrast=-10)
+     S, BWFilter="green", Contrast=-30)
 look(G, "Blue Filter Haze", "filter", "Blue filter: pale skies, heavy haze, weathered skin.",
-     S, BWFilter="blue", Contrast=-15)
+     S, BWFilter="blue", Contrast=-40)
 look(G, "Ortho Portrait", "filter", "Film blind to red: dark lips, strong skin texture, an early-studio look.",
-     S, BWFilter="ortho", Contrast=-15)
+     S, BWFilter="ortho", Contrast=-35)
 look(G, "Deep Red Glow", "filter", "Red filter with glowing highlights and lifted mid-tones for a dreamlike landscape.",
-     S, BWFilter="red", Contrast=5, lab=dict(mid=0.3), fx=dict(glow=30))
+     S, BWFilter="red", Contrast=-40, lab=dict(mid=0.4), fx=dict(glow=30))
 # key
 look(G, "High Key Mono", "key", "Bright and open: mid-tones lifted, contrast lowered.",
-     S, Contrast=-30, lab=dict(mid=0.6, c=-0.2))
+     S, Contrast=-50, lab=dict(mid=0.6, c=-0.2))
 look(G, "Low Key Mono", "key", "Dark and enclosed: mid-tones dropped, corners shaded.",
-     S, Contrast=5, lab=dict(mid=-0.5), vig=(0.5, 50))
+     S, Contrast=-35, lab=dict(mid=-0.35), vig=(0.3, 50))
 # toned prints
-look(G, "Selenium Tone", "toned", "Selenium-toned print: cool purple-brown shadows, neutral highlights.",
-     S, Contrast=-10, cg=dict(sh=(VIOLET, 4), hi=(BLUE, 1)))
+look(G, "Selenium Tone", "toned", "Selenium-toned print: cool violet-brown shadows, neutral highlights.",
+     S, Contrast=-30, ShadowHue=285, ShadowTint=100, MidHue=285, MidTint=40)
 look(G, "Sepia Tone", "toned", "Sepia-toned print: warm brown throughout.",
-     S, Contrast=-10, cg=dict(gl=(AMBER, 9)))
-look(G, "Platinum Print", "toned", "Platinum on warm paper: very long scale, soft, faintly yellow.",
-     S, Format="large", Contrast=-30, cg=dict(gl=(85, 3)), lab=dict(black=0.03, white=0.97))
+     S, Contrast=-30, Warmth=55)
+look(G, "Platinum Print", "toned", "Platinum on warm paper: very long scale, soft, faintly warm.",
+     S, Format="large", Contrast=-55, Warmth=18, lab=dict(black=0.03, white=0.97))
 look(G, "Cyanotype", "toned", "Blueprint blue from shadow to highlight.",
-     S, Contrast=-10, cg=dict(gl=(BLUE, 16)), lab=dict(black=0.03))
+     S, Contrast=-30, Warmth=-100, ShadowHue=225, ShadowTint=100, MidHue=225, MidTint=100, HighlightHue=215, HighlightTint=60,
+     lab=dict(black=0.03))
 look(G, "Copper and Steel", "toned", "Split-toned print: steel-blue shadows under copper highlights.",
-     S, Contrast=-10, cg=dict(sh=(BLUE, 7), hi=(ORANGE, 7)))
-look(G, "Lith Print", "toned", "Lith development: gritty infectious blacks, peach highlights, coarse grain.",
-     S, Contrast=35, cg=dict(mid=(ORANGE, 4), hi=(ORANGE, 9)), lab=dict(c=0.4), grain=(1600, 65))
+     S, Contrast=-30, ShadowHue=225, ShadowTint=100, HighlightHue=28, HighlightTint=100)
+look(G, "Lith Print", "toned", "Lith development: gritty blacks, peach highlights, coarse grain.",
+     S, Contrast=-8, Warmth=25, MidHue=30, MidTint=60, HighlightHue=30, HighlightTint=100, grain=(1600, 65))
 
 # --------------------------------------------------------------------------------------------
 # Texture
@@ -250,27 +264,27 @@ G = "Texture"
 look(G, "Halation Soft", "halation", "A faint red rim around lamps and bright edges; otherwise neutral.",
      Backing="removed", Halation=-30)
 look(G, "Halation Heavy", "halation", "Backing removed and pushed: wide red halos round every light.",
-     "cinematic_500t", Backing="removed", Halation=70, HalationSize=40)
+     "cinematic_500t", Backing="removed", Halation=40, HalationSize=25)
 look(G, "Highlight Bloom", "diffusion", "Highlights spread into their surroundings, as through a diffusion filter.",
      "sovereign", Strength=60, fx=dict(glow=40, radius=35))
 look(G, "Dream Diffusion", "diffusion", "Soft, glowing and low in contrast: a dream sequence.",
      "analog_dream", lab=dict(black=0.03, c=-0.3), fx=dict(glow=30))
 look(G, "Pinhole", "diffusion", "Soft everywhere, dark at the edges, colour thinned.",
-     "sovereign", Saturation=-10, fx=dict(glow=35), vig=(0.75, 40), clarity=-30)
+     "sovereign", Saturation=-10, fx=dict(glow=35), vig=(0.5, 40), clarity=-30)
 look(G, "Matte Blacks", "matte", "Blacks lifted to dark grey; everything else left alone.",
-     "sovereign", Strength=60, lab=dict(black=0.07))
+     "sovereign", Strength=60, lab=dict(black=0.07, mid=-0.15))
 look(G, "Deep Matte", "matte", "Heavy matte: grey blacks, dulled whites, thinner colour.",
-     "sovereign", Strength=60, Saturation=-10, lab=dict(black=0.12, white=0.96))
+     "sovereign", Strength=60, Saturation=-10, lab=dict(black=0.12, white=0.95, mid=-0.25))
 look(G, "Print Density", "density", "The weight of a paper print: firm blacks and dense lower mid-tones.",
      Output="ra4", cg=dict(lum=(-4, 0, 0, 0)), lab=dict(c=0.4))
 look(G, "Gritty Acutance", "grit", "High-acutance grit: hard edges, strong micro-contrast, coarse grain.",
-     "street_800", Contrast=15, clarity=35, texture=40, grain=(1600, 55))
+     "street_800", Contrast=0, clarity=25, texture=35, grain=(1600, 55))
 look(G, "Pushed Two Stops", "grit", "Fast film pushed hard: contrast, blocked shadows and very coarse grain.",
-     "street_800", PushPull=0.5, Contrast=25, grain=(3200, 70))
+     "street_800", PushPull=0.3, Contrast=10, grain=(3200, 70))
 look(G, "Expired Roll", "decay", "Out-of-date film: magenta drift, grey blacks, mottled colour grain.",
      "fade_bloom", lab=dict(black=0.05), grain=(800, 45, 50))
 look(G, "Toy Camera", "decay", "Plastic lens: heavy corners, glow, bright colour, hard contrast.",
-     "heritage_gold", Saturation=15, lab=dict(c=0.3), fx=dict(glow=20), vig=(0.9, 30))
+     "heritage_gold", Saturation=15, lab=dict(c=0.2), fx=dict(glow=20), vig=(0.6, 30))
 look(G, "Large Format Clean", "clean", "Sheet film: no grain, fine detail, neutral colour.",
      "sovereign", Format="large", FilmSharpness=80, texture=10)
 
@@ -283,25 +297,25 @@ look(G, "Portrait Clean", "portrait", "A clean portrait base: soft portrait stoc
 look(G, "Portrait Warm Skin", "portrait", "Warmer skin without touching white balance.",
      "porcelain_400", Warmth=15, SkinProtection=60, cg=dict(mid=(ORANGE, 2)))
 look(G, "Portrait Cool Studio", "portrait", "Cool, controlled studio colour.",
-     "sovereign", Strength=60, Warmth=-10, Saturation=-5)
+     "sovereign", Strength=60, Warmth=-25, Saturation=-8, cg=dict(gl=(BLUE, 2)))
 look(G, "Portrait Window Soft", "portrait", "Window light: soft contrast, lifted mid-tones, a little glow.",
      "porcelain_400", Contrast=-20, lab=dict(c=-0.2, mid=0.2), fx=dict(glow=12))
 look(G, "Headshot Corporate", "portrait", "Neutral, crisp and consistent across a set of headshots.",
-     "sovereign", Strength=55, Contrast=8, FilmSharpness=60)
+     "sovereign", Strength=55, Contrast=8, Warmth=6, FilmSharpness=60)
 look(G, "Beauty Neutral", "portrait", "Beauty work: neutral colour, slightly smoothed skin texture.",
      "sovereign", Strength=40, Saturation=-5, texture=-15)
 look(G, "Fashion Crisp", "portrait", "Fashion editorial: paper-print contrast, colour held back, hard detail.",
-     Output="ra4", Contrast=15, Saturation=-8, clarity=12)
+     Output="ra4", Contrast=0, Saturation=-8, clarity=12)
 look(G, "Wedding Light and Airy", "wedding", "Light and airy: soft contrast, raised mid-tones, pale blacks, gentle glow.",
-     "porcelain_400", Contrast=-30, Saturation=-8, cg=dict(hi=(ORANGE, 1.5)), lab=dict(black=0.04, mid=0.5, c=-0.3), fx=dict(glow=10))
+     "porcelain_400", Contrast=-30, Saturation=-8, cg=dict(hi=(ORANGE, 1.5)), lab=dict(black=0.04, mid=0.35, c=-0.3), fx=dict(glow=10))
 look(G, "Wedding Airy Blush", "wedding", "Light and airy with a blush: a little pink warmth overall.",
-     "porcelain_400", Contrast=-30, Saturation=-5, Warmth=10, cg=dict(gl=(PINK, 2)), lab=dict(black=0.04, mid=0.5, c=-0.3), fx=dict(glow=10))
+     "porcelain_400", Contrast=-30, Saturation=-5, Warmth=14, cg=dict(gl=(PINK, 4)), lab=dict(black=0.04, mid=0.35, c=-0.3), fx=dict(glow=10))
 look(G, "Wedding Dark and Moody", "wedding", "Dark and moody: lowered mid-tones, thin colour, amber highlights, shaded corners.",
      "twilight_160", Saturation=-20, cg=dict(sh=(GREEN, 3), hi=(AMBER, 4)), lab=dict(black=0.02, mid=-0.5, c=0.3), vig=(0.45, 55))
 look(G, "Wedding Moody Emerald", "wedding", "Dark and moody with deep green shadows, for woodland and garden light.",
      "nostalgia_200", Saturation=-10, cg=dict(sh=(GREEN, 6), hi=(AMBER, 3)), lab=dict(black=0.02, mid=-0.4, c=0.3), vig=(0.4, 55))
 look(G, "Wedding Classic Print", "wedding", "A timeless album print: neutral, slightly warm, full blacks.",
-     "sovereign", Output="ra4", Warmth=8)
+     "sovereign", Output="ra4", Contrast=-22, Warmth=8)
 look(G, "Family Bright", "family", "Bright, friendly colour for family sessions.",
      "heritage_gold", Strength=60, lab=dict(mid=0.3))
 look(G, "Newborn Soft", "family", "Very soft: low contrast, pale colour, smoothed texture.",
@@ -316,9 +330,9 @@ look(G, "Product Neutral", "product", "Accurate colour for catalogue work: a lig
 look(G, "Product Crisp White", "product", "White-background product work: brighter mid-tones, clean whites, fine detail.",
      "sovereign", Strength=30, Contrast=10, FilmSharpness=100, lab=dict(mid=0.2, c=0.2), texture=15)
 look(G, "Commercial Punch", "product", "Advertising colour: saturated, contrasty, sharp.",
-     Output="labscan", Contrast=15, Saturation=15, clarity=15)
+     Output="labscan", Contrast=0, Saturation=15, clarity=15)
 look(G, "Architecture Neutral", "architecture", "Buildings as built: neutral colour, firm structure.",
-     "sovereign", Strength=50, FilmSharpness=100, clarity=15)
+     "sovereign", Strength=50, Saturation=-10, FilmSharpness=100, clarity=20)
 look(G, "Architecture Cool Concrete", "architecture", "Concrete, steel and glass: cool, thin colour, strong structure.",
      "arctic", Strength=45, Saturation=-20, clarity=20)
 look(G, "Interior Warm", "architecture", "Lived-in interiors: warm light, soft contrast.",
@@ -326,11 +340,11 @@ look(G, "Interior Warm", "architecture", "Lived-in interiors: warm light, soft c
 look(G, "Real Estate Bright", "architecture", "Listings: bright mid-tones, open shadows, pleasant colour.",
      "sovereign", Strength=40, Saturation=8, lab=dict(mid=0.4, c=-0.2))
 look(G, "Landscape Natural", "landscape", "Landscape as seen: neutral stock, muted colours brought up, a little structure.",
-     "sovereign", Strength=70, Vibrance=20, clarity=12)
+     "sovereign", Strength=70, Saturation=6, Vibrance=35, clarity=10)
 look(G, "Landscape Vivid", "landscape", "Slide-film landscape: strong colour kept inside the highlights.",
      "vivid_chrome", Strength=45, Contrast=-15, clarity=15)
 look(G, "Landscape Golden", "landscape", "Low sun: golden highlights and warm colour.",
-     "golden_hour", Saturation=10, cg=dict(hi=(AMBER, 4)))
+     "golden_hour", Saturation=10, cg=dict(hi=(AMBER, 7), bal=80))
 look(G, "Landscape Moody", "landscape", "Weather: thin colour, teal shadows, lowered mid-tones, strong structure.",
      Saturation=-20, Contrast=15, cg=dict(sh=(TEAL, 5)), lab=dict(mid=-0.3), vig=(0.3, 60), clarity=20)
 look(G, "Seascape Cool", "landscape", "Sea and sky: cool reversal stock with cyan in the shadows.",
@@ -338,13 +352,13 @@ look(G, "Seascape Cool", "landscape", "Sea and sky: cool reversal stock with cya
 look(G, "Forest Deep Green", "landscape", "Woodland: deep, slightly cool greens and dense shade.",
      "nostalgia_200", Saturation=5, cg=dict(mid=(GREEN, 3)), lab=dict(mid=-0.2))
 look(G, "Autumn Foliage", "landscape", "Autumn: reds and oranges lifted, warm overall.",
-     "heritage_gold", Warmth=8, RedShift=20, Contrast=-10, cg=dict(mid=(ORANGE, 3)))
+     "heritage_gold", Warmth=4, RedShift=45, Saturation=12, Contrast=-10, cg=dict(mid=(RED, 4)))
 look(G, "Food Fresh", "food", "Fresh, bright food: lively colour, lifted mid-tones.",
-     "sovereign", Strength=50, Saturation=15, Vibrance=20, lab=dict(mid=0.2))
+     "sovereign", Strength=50, Saturation=22, Vibrance=30, Warmth=6, lab=dict(mid=0.2))
 look(G, "Food Warm Table", "food", "A warm table: golden light, soft corners.",
      "golden_hour", Strength=70, Warmth=10, vig=(0.25, 60))
 look(G, "Food Dark Rustic", "food", "Dark, rustic food: low key, rich mid-tones, heavy corners.",
-     "twilight_160", Saturation=-10, lab=dict(mid=-0.4, c=0.3), vig=(0.5, 50))
+     "twilight_160", Saturation=-10, lab=dict(mid=-0.3, c=0.3), vig=(0.4, 50))
 look(G, "Street Colour", "street", "Street colour: fast negative with the colour brought back up.",
      "street_800", Strength=70, Saturation=10)
 look(G, "Street Muted", "street", "Quiet street colour: thin, soft-black, unhurried.",
@@ -357,9 +371,9 @@ look(G, "Travel Postcard", "street", "Postcard colour: warm slide stock at half 
 # --------------------------------------------------------------------------------------------
 G = "Working - Events and Low Light"
 look(G, "Sport Punch", "sport", "Sport in good light: contrast, colour and bite.",
-     Output="labscan", Contrast=20, Saturation=15, clarity=20)
+     Output="labscan", Contrast=0, Saturation=15, clarity=18)
 look(G, "Sport Overcast", "sport", "Sport under cloud: colour and warmth put back.",
-     "sovereign", Contrast=15, Saturation=20, Warmth=10)
+     "sovereign", Contrast=4, Saturation=28, Warmth=10, clarity=15)
 look(G, "Low Light Clean", "low-light", "Dim rooms: softer contrast and calmer colour so noise stays quiet.",
      "sovereign", Strength=50, Contrast=-15, Saturation=-10, lab=dict(black=0.02))
 look(G, "High ISO Rescue", "low-light", "Very high ISO: colour and contrast reduced, texture eased, fine grain laid over the noise.",
@@ -369,13 +383,13 @@ look(G, "Night City", "low-light", "City at night: tungsten stock, blue shadows,
 look(G, "Indoor Tungsten Tame", "low-light", "Takes the orange out of warm indoor light without changing white balance.",
      "sovereign", Warmth=-35, Saturation=-8)
 look(G, "Event Flash Clean", "event", "Flash at receptions: gentle highlights, a little warmth, clean skin.",
-     "sovereign", Output="labscan", Contrast=5, Rolloff=30, Warmth=8)
+     "sovereign", Output="labscan", Strength=70, Contrast=-20, Rolloff=30, Warmth=8)
 look(G, "Concert Stage Colour", "concert", "Stage lighting: saturated LEDs kept from clipping to flat colour.",
      Rolloff=60, Saturation=-15, LayerCoupling=-30, Contrast=-10)
 look(G, "Concert Halation", "concert", "Stage lights with red halos and glow.",
      "cinematic_500t", Backing="removed", Halation=35, Saturation=5, fx=dict(glow=15))
 look(G, "Concert Mono", "concert", "Black-and-white for the pit: coarse grain, firm contrast.",
-     "silver_gelatin", Contrast=10, grain=(3200, 60))
+     "silver_gelatin", Contrast=-22, grain=(3200, 60))
 
 # --------------------------------------------------------------------------------------------
 # Layers: stack on any look. They carry one section each and no Film Lab keys.
@@ -410,10 +424,9 @@ _vig("Vignette Bright Edges", "Corners lifted instead of darkened, for high-key 
 layer(G, "Vignette Off", "Removes the vignette.", PCVignette=dict(Enabled="false", Strength=0, Feather=50, Roundness=50))
 _fx("Glow Soft", "A light diffusion over the highlights.", glow=25)
 _fx("Glow Bloom", "Highlights bloom well into their surroundings.", glow=50, radius=40)
-_fx("Glow Warm Halation", "A warm fringe on bright edges. Stands down when the film stock is already halating.", halation=50, size=40)
 _fx("Streak Anamorphic", "A horizontal streak through bright lights.", flare=40, length=60, angle=0)
 _fx("Streak Diagonal", "A diagonal streak, as from a smeared front element.", flare=35, length=45, angle=35)
-layer(G, "Glow Off", "Removes glow, halation fringe and streaks.",
+layer(G, "Glow Off", "Removes glow and streaks.",
       **{"Light Effects": dict(Enabled="false", Threshold=70, Glow=0, GlowRadius=25, Halation=0, HalationSize=30,
                                HalationWarmth=70, Flare=0, FlareLength=40, FlareAngle=0)})
 layer(G, "Detail Micro Contrast", "Fine texture brought forward.", Texture=dict(Enabled="true", Radius=20, Amount=25))
