@@ -1,0 +1,81 @@
+# A corner-shop print: warm, yellow highlights, green in the shadows, soft blacks, grain.
+# Graded look: owns Film Lab, colour grading, the Lab curve and the Black-and-White switch,
+# plus the finish sections listed below. It never sets exposure, white balance, crop or lens corrections.
+# Apply with the fill option off so the rest of the edit is kept.
+
+[Film Presets]
+Enabled=true
+Preset=heritage_gold
+ModelVersion=6
+PushPull=0
+Process=auto
+Output=ra4
+Format=35mm
+Backing=auto
+BWFilter=none
+LensDesign=slr
+Strength=65
+Contrast=-10
+Saturation=0
+Warmth=8
+Tint=0
+Fade=0
+Rolloff=0
+ShadowHue=220
+ShadowTint=0
+MidHue=35
+MidTint=0
+HighlightHue=40
+HighlightTint=0
+Halation=0
+RedShift=0
+GreenShift=0
+BlueShift=0
+Grain=0
+Vibrance=0
+SkinProtection=35
+LayerCoupling=0
+GrainSize=0
+GrainClumping=0
+GrainColor=0
+HalationSize=0
+HalationThreshold=0
+LightSources=0
+FilmSharpness=0
+HalationColor=0
+Bloom=0
+OutputSoftness=0
+
+[Color Grading]
+Enabled=true
+ShadowsHue=150
+ShadowsSat=0.1
+ShadowsLum=0
+MidtonesHue=0
+MidtonesSat=0
+MidtonesLum=0
+HighlightsHue=95
+HighlightsSat=0.15
+HighlightsLum=0
+GlobalHue=0
+GlobalSat=0
+GlobalLum=0
+Blending=100
+Balance=60
+
+[Luminance Curve]
+Enabled=true
+Brightness=0
+Contrast=0
+Chromaticity=0
+LCurve=1;0;0.0500;0.06;0.1070;0.125;0.1688;0.25;0.2875;0.375;0.4062;0.5;0.5250;0.625;0.6438;0.75;0.7625;0.875;0.8812;0.94;0.9430;1;1.0000;
+
+[Grain]
+Enabled=true
+ISO=400
+Strength=30
+Scale=100
+Color=0
+
+[Black & White]
+Enabled=false
