@@ -34,7 +34,8 @@ void ImProcFunctions::grainEffect(LabImage *lab, const GrainParams &params, int 
     }
 
     // Film Lab, when it is on, says what emulsion this grain belongs to.
-    const GrainCharacter character = film ? filmGrainCharacter(*film) : GrainCharacter();
+    GrainCharacter character = film ? filmGrainCharacter(*film) : GrainCharacter();
+    character.style = grainStyleFromName(params.style.c_str());
 
     const int w = lab->W;
     const int h = lab->H;

@@ -40,6 +40,7 @@
     along with darktable.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <cstring>
 #include "imagefloat.h"
 #include "improcfun.h"
 #include "graincharacter.h"
@@ -595,9 +596,48 @@ inline void layersToLab(float r, float g, float bl, float& L, float& a, float& b
     b = 200.f * (fy - fz) * 327.68f;
 }
 
+// What each style does to the emulsion model.
+struct StyleShape {
+    float size;        // multiplies the grain diameter
+    float amount;      // multiplies sigma
+    float crystal;     // multiplies the crystal lattice's weight
+    float clump;       // multiplies the clump weight
+    float gather;      // multiplies how far clumps modulate the fine texture
+    float gatherFloor; // least the fine texture is allowed to fade to
+    float skew;        // multiplies the tone-dependent skew
+    float toneFloor;   // lifts granularity toward even across the tone scale
+};
+
+inline StyleShape styleShape(int style)
+{
+    switch (style) {
+        case GRAIN_PUSHED:
+            return {1.6f, 1.4f, .8f, 1.7f, 2.2f, .45f, 1.8f, .35f};
+        case GRAIN_SOFT:
+            return {2.3f, 1.15f, 0.f, 1.6f, 1.f, .65f, .5f, .2f};
+        case GRAIN_RETICULATED:
+            return {1.5f, 1.2f, 1.f, 1.f, 1.f, .65f, 1.f, .5f};
+        case GRAIN_STIPPLE:
+            return {1.15f, 1.5f, 1.3f, .6f, 1.f, .65f, 1.f, .45f};
+        default:
+            return {1.f, 1.f, 1.f, 1.f, 1.f, .65f, 1.f, 0.f};
+    }
+}
+
 } // namespace grainv3
 
 } // namespace
+
+int grainStyleFromName(const char* name)
+{
+    static const char* const names[] = {"film", "pushed", "soft", "reticulated", "stipple", "halftone", "linescreen"};
+    for (int k = 0; k < 7; ++k) {
+        if (name && !std::strcmp(name, names[k])) {
+            return k;
+        }
+    }
+    return GRAIN_FILM;
+}
 
 
 void ImProcFunctions::filmGrain(Imagefloat *rgb, int isogr, int strengr, int scalegr, float divgr, int bfw, int bfh, int call, int fw, int fh)
@@ -625,7 +665,44 @@ void ImProcFunctions::filmGrainV2(Imagefloat *lab, int isogr, int strengr, int s
     // what is seen as grain is a cluster of crystals, and clusters level off.
     const double micrometres = (5. + 3.2 * std::pow(std::max(isogr, 20) / 100., .42))
                                * (std::max(scalegr, 10) / 100.) * std::max(.25f, character.sizeMul);
-    const double cell = std::max(.75, micrometres * wd / 24000.);
+    const StyleShape shape = styleShape(character.style);
+
+    if (character.style == GRAIN_HALFTONE || character.style == GRAIN_LINESCREEN) {
+        // A printer's screen, not grain: the tone becomes the size of an ink
+        // dot (or the width of an ink line) on a 45 degree lattice anchored to
+        // the full image. Its pitch follows the grain size, nine diameters:
+        // about 250 dots across the short side at ISO 400, 40 at the coarsest.
+        const double pitch = std::max(3., micrometres * 9. * wd / 24000.);
+        const float amount = std::min(strengr / 100.f, 1.f);
+        const float drain = LIM(strengr / 100.f - 1.f, 0.f, 1.f);     // past 100 the colour goes too
+        // A preview too small to hold the dots shows the tone they average to.
+        const float fade = LIM(float(pitch / s - 2.) * .5f, 0.f, 1.f) * amount;
+        const float edge = LIM(float(1.6 * s / pitch), .04f, .5f);
+        const bool lines = character.style == GRAIN_LINESCREEN;
+        const double k = 2. * RT_PI / pitch * std::sqrt(.5);
+        constexpr float PAPER = .96f * 32768.f, INK = .06f * 32768.f;
+        float **pL = lab->g.ptrs, **pa = lab->r.ptrs, **pb = lab->b.ptrs;
+#ifdef _OPENMP
+#       pragma omp parallel for schedule(static) if (multiThread)
+#endif
+        for (int j = 0; j < H; ++j) {
+            const double fy = originY + (j + .5) * s;
+            for (int i = 0; i < W; ++i) {
+                const double fx = originX + (i + .5) * s;
+                const float u = float((fx + fy) * k), v = float((fy - fx) * k);
+                const float screen = lines ? .5f + .5f * std::cos(u) : .5f + .25f * (std::cos(u) + std::cos(v));
+                const float dark = 1.f - LIM(pL[j][i] / 32768.f, 0.f, 1.f);
+                const float ink = LIM((dark - screen) / (2.f * edge) + .5f, 0.f, 1.f);
+                pL[j][i] += (PAPER + (INK - PAPER) * ink - pL[j][i]) * fade;
+                const float keep = 1.f - drain * fade;
+                pa[j][i] *= keep;
+                pb[j][i] *= keep;
+            }
+        }
+        return;
+    }
+
+    const double cell = std::max(.75, micrometres * shape.size * wd / 24000.);
     const float sigmaUnit = unitSigma();
 
     // Once an output pixel outspans a grain the lattice follows the pixel
@@ -652,7 +729,7 @@ void ImProcFunctions::filmGrainV2(Imagefloat *lab, int isogr, int strengr, int s
     const Lattice dyeB = lattice(cell * 2.0, 1., 0x0F1E2D3CU);
 
     const float strength = strengr / 100.f;
-    const float sigma = strength * .26f * std::max(.1f, character.gain);
+    const float sigma = strength * .26f * std::max(.1f, character.gain) * shape.amount;
     // How far the three colour layers go their own way.
     const float independence = colour ? LIM(colorgr / 100.f * character.chroma * .55f, 0.f, .9f) : 0.f;
     const float shared = std::sqrt(1.f - independence * independence);
@@ -699,21 +776,32 @@ void ImProcFunctions::filmGrainV2(Imagefloat *lab, int isogr, int strengr, int s
                     const float L = lab_L[j][i];
                     const float lstar = LIM(L / 32768.f, 0.f, 1.2f);
                     const float tone = std::min(lstar, 1.f);
-                    const float g = granularity(lstar, peak) * sigma;
+                    const float g = (shape.toneFloor + (1.f - shape.toneFloor) * granularity(lstar, peak)) * sigma;
 
                     // Coarse and gathered in the shadows, fine in the highlights.
-                    const float wCrystal = .75f + .7f * tone;
-                    const float wClump = clumping * (.6f - .3f * tone);
-                    const float wGather = (.08f + .25f * clumping) * (1.2f - .4f * tone);
+                    const float wCrystal = (.75f + .7f * tone) * shape.crystal;
+                    const float wClump = clumping * (.6f - .3f * tone) * shape.clump;
+                    const float wGather = (.08f + .25f * clumping) * (1.2f - .4f * tone) * shape.gather;
                     const float wMottle = .08f * (1.3f - .6f * tone);
                     const float c = fieldClump[row + i];
-                    const float gather = std::max(.65f, 1.f + wGather * c);
+                    const float gather = std::max(shape.gatherFloor, 1.f + wGather * c);
                     const float texture = (wCrystal * fieldCrystal[row + i] + fieldFine[row + i])
                                           / std::sqrt(1.f + wCrystal * wCrystal);
                     const float norm = 1.f / std::sqrt(1.f + wGather * wGather + wClump * wClump + wMottle * wMottle);
                     float n = (texture * gather + wClump * c + wMottle * fieldMottle[row + i]) * norm;
                     // Lone light grains in the shadows, dark gaps in the highlights.
-                    const float skew = .055f * (1.f - 2.f * tone) - .02f;
+                    const float skew = (.055f * (1.f - 2.f * tone) - .02f) * shape.skew;
+
+                    if (character.style == GRAIN_RETICULATED) {
+                        // Gelatin that has wrinkled: plates of even density
+                        // divided by dark creases, which run where the clump
+                        // field crosses zero. The grain rides on top.
+                        const float crease = 1.f - std::min(1.f, std::fabs(c) * 1.5f);
+                        n = .55f * n - 2.6f * (crease * crease * crease - .22f);
+                    } else if (character.style == GRAIN_STIPPLE) {
+                        // Two tones only: every grain fully developed or not at all.
+                        n = 2.2f * std::tanh(n * 2.5f);
+                    }
 
                     if (!colour) {
                         const float Y = labToY(L);

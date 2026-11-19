@@ -156,6 +156,7 @@ struct GrainParamsEdited {
     bool strength;
     bool scale;
     bool color;
+    bool style;
 };
 
 struct LightEffectsParamsEdited {

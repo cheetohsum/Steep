@@ -259,6 +259,7 @@ void ParamsEdited::set(bool v)
     grain.strength = v;
     grain.scale = v;
     grain.color = v;
+    grain.style = v;
     lightEffects.enabled = v;
     lightEffects.threshold = v;
     lightEffects.glow = v;
@@ -1165,6 +1166,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         grain.strength = grain.strength && p.grain.strength == other.grain.strength;
         grain.scale = grain.scale && p.grain.scale == other.grain.scale;
         grain.color = grain.color && p.grain.color == other.grain.color;
+        grain.style = grain.style && p.grain.style == other.grain.style;
         lightEffects.enabled = lightEffects.enabled && p.lightEffects.enabled == other.lightEffects.enabled;
         lightEffects.threshold = lightEffects.threshold && p.lightEffects.threshold == other.lightEffects.threshold;
         lightEffects.glow = lightEffects.glow && p.lightEffects.glow == other.lightEffects.glow;
@@ -3209,6 +3211,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
     if (grain.color) {
         toEdit.grain.color = mods.grain.color;
+    }
+
+    if (grain.style) {
+        toEdit.grain.style = mods.grain.style;
     }
 
     if (lightEffects.enabled) {

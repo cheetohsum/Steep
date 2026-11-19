@@ -685,7 +685,8 @@ GrainParams::GrainParams():
     iso(400),
     strength(0),
     scale(100),
-    color(0)
+    color(0),
+    style("film")
 {
 }
 
@@ -696,7 +697,8 @@ bool GrainParams::operator==(const GrainParams &other) const
         && iso == other.iso
         && strength == other.strength
         && scale == other.scale
-        && color == other.color;
+        && color == other.color
+        && style == other.style;
 }
 
 bool GrainParams::operator!=(const GrainParams &other) const
@@ -4378,6 +4380,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->grain.strength, "Grain", "Strength", grain.strength, keyFile);
         saveToKeyfile(!pedited || pedited->grain.scale, "Grain", "Scale", grain.scale, keyFile);
         saveToKeyfile(!pedited || pedited->grain.color, "Grain", "Color", grain.color, keyFile);
+        saveToKeyfile(!pedited || pedited->grain.style, "Grain", "Style", grain.style, keyFile);
 
         saveToKeyfile(!pedited || pedited->lightEffects.enabled, "Light Effects", "Enabled", lightEffects.enabled, keyFile);
         saveToKeyfile(!pedited || pedited->lightEffects.threshold, "Light Effects", "Threshold", lightEffects.threshold, keyFile);
@@ -5961,6 +5964,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             assignFromKeyfile(keyFile, "Grain", "Strength", grain.strength, pedited->grain.strength);
             assignFromKeyfile(keyFile, "Grain", "Scale", grain.scale, pedited->grain.scale);
             assignFromKeyfile(keyFile, "Grain", "Color", grain.color, pedited->grain.color);
+            assignFromKeyfile(keyFile, "Grain", "Style", grain.style, pedited->grain.style);
         }
 
         if (keyFile.has_group("TiltShift")) {

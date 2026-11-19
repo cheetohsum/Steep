@@ -40,7 +40,22 @@ struct GrainCharacter {
     bool mono = false;        // silver image: no colour grain at all
     float densityPeak = .62f; // L* fraction (0..1) where granularity peaks
     float gain = 1.f;         // stock's graininess for its speed, 1 = typical
+    int style = 0;            // GrainStyle: how the field is built, from the Grain tool
 };
+
+// The Grain tool's Style. Film is the emulsion model; the others bend it or,
+// for the two screens, replace it with a printer's pattern.
+enum GrainStyle {
+    GRAIN_FILM = 0,
+    GRAIN_PUSHED,
+    GRAIN_SOFT,
+    GRAIN_RETICULATED,
+    GRAIN_STIPPLE,
+    GRAIN_HALFTONE,
+    GRAIN_LINESCREEN
+};
+
+int grainStyleFromName(const char* name);
 
 GrainCharacter filmGrainCharacter(const procparams::FilmPresetsParams& film);
 

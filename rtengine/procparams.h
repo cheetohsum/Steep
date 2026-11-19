@@ -247,9 +247,10 @@ struct ClarityParams {
 struct GrainParams {
     bool enabled;
     int iso;          // Default: 400 (20-6400)
-    int strength;     // Default: 0 (0-100)
-    int scale;        // Default: 100 (0-100), grain size
-    int color;        // Default: 0 (0-100), chroma grain from per-layer dye clouds
+    int strength;     // Default: 0 (0-200); past 100 is heavier than any film
+    int scale;        // Default: 100 (0-300), grain size; past 100 is enlarged
+    int color;        // Default: 0 (0-100), how far the three dye layers' grain differs
+    Glib::ustring style; // film, pushed, reticulated, stipple, soft, halftone, linescreen
 
     GrainParams();
 

@@ -36,10 +36,12 @@ Grain::Grain(): FoldableToolPanel(this, TOOL_NAME, M("TP_GRAIN_LABEL"), false, t
     EvGrainISO = m->newEvent(EFFECTS, "HISTORY_MSG_GRAIN_ISO");
     EvGrainScale = m->newEvent(EFFECTS, "HISTORY_MSG_GRAIN_SCALE");
     EvGrainColor = m->newEvent(EFFECTS, "HISTORY_MSG_GRAIN_COLOR");
+    EvGrainStyle = m->newEvent(EFFECTS, "HISTORY_MSG_GRAIN_STYLE");
 
-    strength = Gtk::manage(new Adjuster(M("TP_GRAIN_STRENGTH"), 0., 100., 1., 0.));
+    // Past 100 both go beyond what film does: heavier, and enlarged.
+    strength = Gtk::manage(new Adjuster(M("TP_GRAIN_STRENGTH"), 0., 200., 1., 0.));
     iso = Gtk::manage(new Adjuster(M("TP_GRAIN_ISO"), 20., 6400., 10., 400.));
-    scale = Gtk::manage(new Adjuster(M("TP_GRAIN_SCALE"), 0., 100., 1., 100.));
+    scale = Gtk::manage(new Adjuster(M("TP_GRAIN_SCALE"), 0., 300., 1., 100.));
     color = Gtk::manage(new Adjuster(M("TP_GRAIN_COLOR"), 0., 100., 1., 0.));
 
     strength->setAdjusterListener(this);
@@ -64,7 +66,25 @@ Grain::Grain(): FoldableToolPanel(this, TOOL_NAME, M("TP_GRAIN_LABEL"), false, t
     detailHeader_->setOnToggled([this](bool) { toggleDetail(); });
     summaryBox->pack_start(*detailHeader_, Gtk::PACK_SHRINK);
 
+    style = Gtk::manage(new MyComboBoxText());
+    style->append("film", M("TP_GRAIN_STYLE_FILM"));
+    style->append("pushed", M("TP_GRAIN_STYLE_PUSHED"));
+    style->append("soft", M("TP_GRAIN_STYLE_SOFT"));
+    style->append("reticulated", M("TP_GRAIN_STYLE_RETICULATED"));
+    style->append("stipple", M("TP_GRAIN_STYLE_STIPPLE"));
+    style->append("halftone", M("TP_GRAIN_STYLE_HALFTONE"));
+    style->append("linescreen", M("TP_GRAIN_STYLE_LINESCREEN"));
+    style->set_active_id("film");
+    style->set_tooltip_text(M("TP_GRAIN_STYLE_TOOLTIP"));
+    style->signal_changed().connect(sigc::mem_fun(*this, &Grain::styleChanged));
+    auto *styleRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+    auto *styleLabel = Gtk::manage(new Gtk::Label(M("TP_GRAIN_STYLE")));
+    styleLabel->set_halign(Gtk::ALIGN_START);
+    styleRow->pack_start(*styleLabel, Gtk::PACK_SHRINK);
+    styleRow->pack_start(*style, Gtk::PACK_EXPAND_WIDGET);
+
     detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    detailContent_->pack_start(*styleRow, Gtk::PACK_SHRINK);
     detailContent_->pack_start(*iso);
     detailContent_->pack_start(*scale);
     detailContent_->pack_start(*color);
@@ -106,6 +126,10 @@ void Grain::read(const ProcParams *pp, const ParamsEdited *pedited)
     scale->setValue(pp->grain.scale);
     color->setValue(pp->grain.color);
 
+    if (!style->set_active_id(pp->grain.style)) {
+        style->set_active_id("film");
+    }
+
     enableListener();
 }
 
@@ -115,6 +139,7 @@ void Grain::write(ProcParams *pp, ParamsEdited *pedited)
     pp->grain.iso = iso->getValue();
     pp->grain.scale = scale->getValue();
     pp->grain.color = color->getValue();
+    pp->grain.style = style->get_active_id();
     pp->grain.enabled = getEnabled();
 
     if (pedited) {
@@ -122,6 +147,7 @@ void Grain::write(ProcParams *pp, ParamsEdited *pedited)
         pedited->grain.iso = iso->getEditedState();
         pedited->grain.scale = scale->getEditedState();
         pedited->grain.color = color->getEditedState();
+        pedited->grain.style = true;
         pedited->grain.enabled = !get_inconsistent();
     }
 }
@@ -159,6 +185,21 @@ void Grain::adjusterChanged(Adjuster* a, double newval)
         } else if (a == color) {
             listener->panelChanged(EvGrainColor, a->getTextValue());
         }
+    }
+}
+
+void Grain::styleChanged()
+{
+    // read() sets the entry with the listener off; only a choice made by hand
+    // is an edit.
+    if (!listener) {
+        return;
+    }
+
+    autoEnable();
+
+    if (getEnabled()) {
+        listener->panelChanged(EvGrainStyle, style->get_active_text());
     }
 }
 

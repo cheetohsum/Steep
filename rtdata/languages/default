@@ -1890,6 +1890,7 @@ HISTORY_MSG_GRAIN_STRENGTH;Grain - Strength
 HISTORY_MSG_GRAIN_ISO;Grain - ISO
 HISTORY_MSG_GRAIN_COLOR;Grain - Color
 HISTORY_MSG_GRAIN_SCALE;Grain - Scale
+HISTORY_MSG_GRAIN_STYLE;Grain - Style
 HISTORY_MSG_TILTSHIFT_ENABLED;Tilt-shift
 HISTORY_MSG_TILTSHIFT_AMOUNT;Tilt-shift - Amount
 HISTORY_MSG_TILTSHIFT_FOCUSPOS;Tilt-shift - Focus position
@@ -4002,6 +4003,15 @@ TP_GRAIN_STRENGTH;Grain
 TP_GRAIN_ISO;ISO
 TP_GRAIN_COLOR;Color
 TP_GRAIN_SCALE;Size
+TP_GRAIN_STYLE;Style
+TP_GRAIN_STYLE_FILM;Film
+TP_GRAIN_STYLE_PUSHED;Pushed
+TP_GRAIN_STYLE_SOFT;Soft clouds
+TP_GRAIN_STYLE_RETICULATED;Reticulated
+TP_GRAIN_STYLE_STIPPLE;Stipple
+TP_GRAIN_STYLE_HALFTONE;Halftone dots
+TP_GRAIN_STYLE_LINESCREEN;Line screen
+TP_GRAIN_STYLE_TOOLTIP;How the grain is built.\nFilm: clustered crystals, as an emulsion makes them.\nPushed: larger, more gathered and heavier in the shadows, as from forced development.\nSoft clouds: large, soft clumps with no fine crystals.\nReticulated: the cracked, cellular pattern of gelatin shocked by a cold bath.\nStipple: hard two-tone grain, like a lith print or a mezzotint.\nHalftone dots and Line screen: a printer's screen instead of grain. ISO and Size set its pitch, and at full strength the picture is pure ink and paper.
 TP_TILTSHIFT_LABEL;Tilt-shift
 TP_TILTSHIFT_AMOUNT;Amount
 TP_TILTSHIFT_FOCUSPOS;Focus position

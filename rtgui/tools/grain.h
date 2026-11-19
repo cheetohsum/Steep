@@ -19,6 +19,7 @@
 
 #include "toolpanel.h"
 #include "widgets/basic/adjuster.h"
+#include "guiutils.h"
 
 #include <gtkmm.h>
 
@@ -29,6 +30,7 @@ private:
     Adjuster *iso;
     Adjuster *scale;
     Adjuster *color;
+    MyComboBoxText *style;
     Gtk::Box* detailContent_;
     SectionHeader* detailHeader_;
     Gtk::Revealer* detailRevealer_;
@@ -39,8 +41,10 @@ private:
     rtengine::ProcEvent EvGrainISO;
     rtengine::ProcEvent EvGrainScale;
     rtengine::ProcEvent EvGrainColor;
+    rtengine::ProcEvent EvGrainStyle;
 
     void toggleDetail();
+    void styleChanged();
 
 public:
     static const Glib::ustring TOOL_NAME;
