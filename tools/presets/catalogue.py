@@ -522,6 +522,41 @@ look(G, "Velvet Blur", "structure", "Clarity run backwards: glowing, smooth, low
      "analog_dream", lab=dict(c=-0.2, black=0.04), clarity=-55, fx=dict(glow=45, radius=40))
 
 # --------------------------------------------------------------------------------------------
+# Grain: looks where the texture is the subject. Tuned on the V4 grain engine (clustered
+# crystals, coarser and light-specked toward the shadows, per-layer colour grain).
+# --------------------------------------------------------------------------------------------
+G = "Grain"
+S = "silver_gelatin"
+look(G, "Pushed Mono 3200", "mono", "Fast film pushed two stops: coarse, gathered silver grain through every tone.",
+     S, PushPull=0.15, Contrast=-22, lab=dict(c=0.3), grain=(3200, 85))
+look(G, "Grain Storm", "mono", "As much grain as the emulsion will give: the picture half dissolved in it.",
+     S, Contrast=-25, lab=dict(c=0.4), grain=(6400, 100))
+look(G, "Charcoal", "mono", "Low-key and sooty: dark mid-tones full of large, lone grains.",
+     S, Contrast=-35, lab=dict(mid=-0.35, c=0.2), grain=(3200, 80), vig=(0.3, 50))
+look(G, "Salted Paper", "mono", "An early paper print: pale, soft, the image sitting in a fine even grain.",
+     S, Contrast=-50, lab=dict(black=0.08, white=0.92, mid=0.3), grain=(1600, 70))
+look(G, "Fine Art Grain", "mono", "Roll film printed large: a long tonal scale with tight, crisp grain you can count.",
+     S, Format="120", Contrast=-35, FilmSharpness=40, lab=dict(c=0.2), grain=(800, 60), texture=12)
+look(G, "Surveillance", "mono", "Long lens, no light: hard, clipped and very coarse, corners gone.",
+     S, Contrast=-5, lab=dict(c=0.6, white=0.95), grain=(6400, 90), vig=(0.6, 35), clarity=18)
+look(G, "Dye Cloud Colour", "colour", "Colour negative seen close: each layer's dye clouds showing as soft colour speckle.",
+     "heritage_gold", Strength=80, Saturation=5, lab=dict(c=0.2), grain=(1600, 75, 90))
+look(G, "Deep Grain Night", "colour", "Fast tungsten stock at night: blue shadows alive with coarse colour grain, lamps haloed.",
+     "cinematic_500t", Backing="removed", Halation=25, cg=dict(sh=(BLUE, 5), hi=(AMBER, 3)), lab=dict(c=0.3, black=0.03),
+     grain=(3200, 80, 60))
+look(G, "Printed Up", "colour", "Underexposed and rescued in the print: milky blacks, green-blue shadows, heavy grain.",
+     "street_800", Saturation=-15, cg=dict(sh=(SEA, 7)), lab=dict(black=0.09, mid=0.35, c=-0.15), grain=(3200, 90, 70))
+look(G, "Sixteen Millimetre", "colour", "Small-gauge motion picture film: the grain enlarged, soft glow, cinema print colour.",
+     Output="cinema", Saturation=-8, cg=dict(sh=(TEAL, 4), hi=(AMBER, 4)), lab=dict(c=0.2, black=0.03),
+     grain=(3200, 85, 50), fx=dict(glow=20))
+look(G, "Half Frame Summer", "colour", "Half-frame holiday colour: warm, bright, grain twice the size it should be.",
+     "golden_hour", Saturation=10, lab=dict(mid=0.2), grain=(1600, 80, 50), vig=(0.3, 45))
+look(G, "Cold Grain", "colour", "Cold, thin colour under tight coarse grain.",
+     "arctic", Saturation=-30, cg=dict(sh=(CYAN, 5)), lab=dict(c=0.35), grain=(1600, 75, 30))
+look(G, "Warm Grain Portrait", "colour", "A portrait stock with its grain left in: soft colour, skin textured not smoothed.",
+     "porcelain_400", Warmth=8, lab=dict(c=-0.15, mid=0.15), grain=(800, 65, 40))
+
+# --------------------------------------------------------------------------------------------
 # Layers: stack on any look. They carry one section each and no Film Lab keys.
 # --------------------------------------------------------------------------------------------
 G = "Layers - Grain"
@@ -535,6 +570,8 @@ _grain("Grain Pushed 1600", "Pushed-film grain: coarse and assertive.", 1600, 55
 _grain("Grain Coarse 3200", "The coarsest: surveillance and concert grain.", 3200, 70)
 _grain("Grain Dye Clouds 400", "Colour grain: soft dye clouds in all three layers.", 400, 40, 60)
 _grain("Grain Dye Clouds 1600", "Coarse colour grain, as on pushed colour negative.", 1600, 55, 70)
+_grain("Grain Deep 6400", "The deepest setting: very coarse grain reaching far into the shadows.", 6400, 90)
+_grain("Grain Colour Storm 3200", "Coarse grain with the three colour layers nearly independent.", 3200, 85, 90)
 _grain("Grain Small Format", "Half-frame and 16 mm: the same grain enlarged further.", 800, 50, 20, 100)
 _grain("Grain Medium Format", "Roll film: the same grain enlarged less.", 400, 30, 0, 45)
 layer(G, "Grain Off", "Removes grain.", Grain=dict(Enabled="false", ISO=400, Strength=0, Scale=100, Color=0))

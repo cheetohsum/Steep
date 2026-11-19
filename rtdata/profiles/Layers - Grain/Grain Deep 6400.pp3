@@ -1,0 +1,10 @@
+# The deepest setting: very coarse grain reaching far into the shadows.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[Grain]
+Enabled=true
+ISO=6400
+Strength=90
+Scale=100
+Color=0
