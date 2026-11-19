@@ -85,9 +85,9 @@ Enabled=false
 
 [Grain]
 Enabled=true
-ISO=3200
+ISO=1600
 Strength=100
-Scale=180
+Scale=120
 Color=0
 Style=halftone
 

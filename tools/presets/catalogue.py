@@ -579,15 +579,15 @@ look(G, "Lith Stipple", "stylised", "Infectious development: hard black specks u
 look(G, "Newsprint Halftone", "screen", "The picture as a newspaper printed it: a fine dot screen in black ink.",
      S, Contrast=-25, lab=dict(c=0.3), grain=(800, 200, 0, 100, "halftone"))
 look(G, "Pop Dots", "screen", "Saturated colour under coarse black dots.",
-     "vivid_chrome", Strength=70, Saturation=25, lab=dict(c=0.3, chroma=25), grain=(3200, 100, 0, 180, "halftone"))
+     "vivid_chrome", Strength=70, Saturation=25, lab=dict(c=0.3, chroma=25), grain=(1600, 100, 0, 120, "halftone"))
 look(G, "Comic Print", "screen", "Cheap four-colour printing: flat hyper colour, coarse dots, heavy edges.",
-     lab=dict(a="1;0;0;0.4;0.1;0.6;0.9;1;1;", b="1;0;0;0.4;0.1;0.6;0.9;1;1;", c=0.3), grain=(1600, 100, 0, 150, "halftone"), clarity=30, gain=1)
+     lab=dict(a="1;0;0;0.4;0.1;0.6;0.9;1;1;", b="1;0;0;0.4;0.1;0.6;0.9;1;1;", c=0.3), grain=(1600, 100, 0, 100, "halftone"), clarity=30, gain=1)
 look(G, "Engraved Lines", "screen", "A banknote engraving: tone carried by the width of diagonal ink lines.",
      S, Contrast=-25, lab=dict(c=0.3), grain=(1600, 200, 0, 120, "linescreen"), clarity=20)
 look(G, "Scan Lines Colour", "screen", "Bold diagonal lines over full colour.",
-     Saturation=15, lab=dict(c=0.3), grain=(3200, 100, 0, 160, "linescreen"))
+     Saturation=15, lab=dict(c=0.3), grain=(1600, 100, 0, 120, "linescreen"))
 look(G, "Risograph Dots", "screen", "One fluorescent ink through a coarse dot screen.",
-     None, bw=True, ct=(38, -4, 20, 0), lab=dict(c=0.4, white=0.95), grain=(1600, 100, 0, 150, "halftone"), gain=1)
+     None, bw=True, ct=(38, -4, 20, 0), lab=dict(c=0.4, white=0.95), grain=(1600, 100, 0, 105, "halftone"), gain=1)
 
 # --------------------------------------------------------------------------------------------
 # Layers: stack on any look. They carry one section each and no Film Lab keys.
@@ -617,10 +617,10 @@ _grain("Grain Reticulated Coarse", "Reticulation at a size you can read across a
 _grain("Grain Stipple", "Two-tone grain: every speck black or white.", 800, 90, 0, 100, "stipple")
 _grain("Grain Stipple Coarse", "Coarse two-tone grain, like a mezzotint.", 3200, 130, 0, 200, "stipple")
 _grain("Screen Halftone Fine", "A newspaper halftone screen laid over the picture.", 400, 100, 0, 100, "halftone")
-_grain("Screen Halftone Coarse", "Pop-art dots.", 3200, 100, 0, 180, "halftone")
-_grain("Screen Halftone Mono", "Coarse dots with the colour drained: pure ink on paper.", 1600, 200, 0, 150, "halftone")
+_grain("Screen Halftone Coarse", "Pop-art dots.", 1600, 100, 0, 120, "halftone")
+_grain("Screen Halftone Mono", "Coarse dots with the colour drained: pure ink on paper.", 1600, 200, 0, 105, "halftone")
 _grain("Screen Lines Fine", "An engraver's line screen.", 400, 100, 0, 100, "linescreen")
-_grain("Screen Lines Coarse", "Bold diagonal ink lines whose width carries the tone.", 3200, 100, 0, 160, "linescreen")
+_grain("Screen Lines Coarse", "Bold diagonal ink lines whose width carries the tone.", 1600, 100, 0, 120, "linescreen")
 layer(G, "Grain Off", "Removes grain.", Grain=dict(Enabled="false", ISO=400, Strength=0, Scale=100, Color=0, Style="film"))
 
 G = "Layers - Finish"
