@@ -545,6 +545,13 @@ inline float granularity(float lstar, float peak)
     return (.24f + .76f * hump) * paperWhite;
 }
 
+// The field's tails are bounded smoothly: a grain is at most a few times
+// denser than its surroundings, and a hard clip would leave flat specks.
+inline float soften(float n)
+{
+    return 3.2f * std::tanh(n * (1.f / 3.2f));
+}
+
 inline float labToY(float L)
 {
     const float fy = (L * (100.f / 32768.f) + 16.f) / 116.f;
@@ -614,8 +621,9 @@ void ImProcFunctions::filmGrainV2(Imagefloat *lab, int isogr, int strengr, int s
     const double wd = std::max(1, std::min(fullW, fullH));
 
     // Grain diameter: micrometres on a 35 mm frame (24 mm short side), from
-    // the ISO slider. Fine-grained slow film near 7 um, fast film past 30.
-    const double micrometres = (6. + 2.6 * std::pow(std::max(isogr, 20) / 100., .6))
+    // the ISO slider. Fine-grained slow film near 8 um, the fastest about 23:
+    // what is seen as grain is a cluster of crystals, and clusters level off.
+    const double micrometres = (5. + 3.2 * std::pow(std::max(isogr, 20) / 100., .42))
                                * (std::max(scalegr, 10) / 100.) * std::max(.25f, character.sizeMul);
     const double cell = std::max(.75, micrometres * wd / 24000.);
     const float sigmaUnit = unitSigma();
@@ -694,23 +702,23 @@ void ImProcFunctions::filmGrainV2(Imagefloat *lab, int isogr, int strengr, int s
                     const float g = granularity(lstar, peak) * sigma;
 
                     // Coarse and gathered in the shadows, fine in the highlights.
-                    const float wCrystal = .45f + .75f * tone;
-                    const float wClump = clumping * (1.35f - .7f * tone);
-                    const float wGather = (.12f + .38f * clumping) * (1.2f - .4f * tone);
-                    const float wMottle = .16f * (1.3f - .6f * tone);
+                    const float wCrystal = .75f + .7f * tone;
+                    const float wClump = clumping * (.6f - .3f * tone);
+                    const float wGather = (.08f + .25f * clumping) * (1.2f - .4f * tone);
+                    const float wMottle = .08f * (1.3f - .6f * tone);
                     const float c = fieldClump[row + i];
-                    const float gather = std::max(.4f, 1.f + wGather * c);
+                    const float gather = std::max(.65f, 1.f + wGather * c);
                     const float texture = (wCrystal * fieldCrystal[row + i] + fieldFine[row + i])
                                           / std::sqrt(1.f + wCrystal * wCrystal);
                     const float norm = 1.f / std::sqrt(1.f + wGather * wGather + wClump * wClump + wMottle * wMottle);
                     float n = (texture * gather + wClump * c + wMottle * fieldMottle[row + i]) * norm;
                     // Lone light grains in the shadows, dark gaps in the highlights.
-                    const float skew = .07f * (1.f - 2.f * tone) - .02f;
+                    const float skew = .055f * (1.f - 2.f * tone) - .02f;
 
                     if (!colour) {
                         const float Y = labToY(L);
                         if (Y > 0.f) {
-                            n = LIM(n + skew * (n * n - 1.f), -4.5f, 4.5f);
+                            n = soften(n + skew * (n * n - 1.f));
                             lab_L[j][i] = yToLab(Y * std::exp(n * g));
                         }
                         continue;
@@ -723,7 +731,7 @@ void ImProcFunctions::filmGrainV2(Imagefloat *lab, int isogr, int strengr, int s
                     constexpr float layerGain[3] = {1.f, 1.f, 1.25f};
                     for (int k = 0; k < 3; ++k) {
                         float v = shared * n + independence * own[k] * gather / std::sqrt(1.f + wGather * wGather);
-                        v = LIM(v + skew * (v * v - 1.f), -4.5f, 4.5f);
+                        v = soften(v + skew * (v * v - 1.f));
                         layer[k] *= std::exp(v * g * layerGain[k]);
                     }
                     layersToLab(layer[0], layer[1], layer[2], lab_L[j][i], lab_a[j][i], lab_b[j][i]);
