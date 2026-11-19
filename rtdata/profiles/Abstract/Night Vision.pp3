@@ -50,6 +50,7 @@ ISO=3200
 Strength=75
 Scale=100
 Color=0
+Style=film
 
 [Light Effects]
 Enabled=true

@@ -1,0 +1,11 @@
+# Soft colour clouds, each layer on its own.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[Grain]
+Enabled=true
+ISO=1600
+Strength=100
+Scale=160
+Color=55
+Style=soft

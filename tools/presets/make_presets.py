@@ -124,9 +124,10 @@ def look_text(look):
     if is_mono(look):
         out += ["Method=Desaturation"]
 
-    iso, strength, colour, size = (tuple(look.get("grain", (400, 0))) + (0, 100))[:4]
+    iso, strength, colour, size, style = (tuple(look.get("grain", (400, 0))) + (0, 100, "film"))[:5] \
+        if len(look.get("grain", ())) < 5 else look["grain"]
     out += ["", "[Grain]", "Enabled=%s" % ("true" if strength else "false"), "ISO=%d" % iso,
-            "Strength=%d" % strength, "Scale=%d" % size, "Color=%d" % colour]
+            "Strength=%d" % strength, "Scale=%d" % size, "Color=%d" % colour, "Style=%s" % style]
     fx = look.get("fx", {})
     out += ["", "[Light Effects]", "Enabled=%s" % ("true" if fx else "false"), "Threshold=%d" % fx.get("threshold", 70),
             "Glow=%d" % fx.get("glow", 0), "GlowRadius=%d" % fx.get("radius", 25),

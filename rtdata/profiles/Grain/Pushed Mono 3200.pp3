@@ -90,6 +90,7 @@ ISO=3200
 Strength=85
 Scale=100
 Color=0
+Style=film
 
 [Light Effects]
 Enabled=false

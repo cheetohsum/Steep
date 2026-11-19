@@ -90,6 +90,7 @@ ISO=6400
 Strength=100
 Scale=100
 Color=0
+Style=film
 
 [Light Effects]
 Enabled=false

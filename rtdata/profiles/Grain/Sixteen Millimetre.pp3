@@ -89,6 +89,7 @@ ISO=3200
 Strength=85
 Scale=0
 Color=50
+Style=100
 
 [Light Effects]
 Enabled=true

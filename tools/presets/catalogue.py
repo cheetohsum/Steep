@@ -13,7 +13,8 @@ A look is:  look(group, name, family, note, stock, film..., cg=, ct=, lab=, grai
               black / white  where pure black and white land; c  S-curve contrast; mid  mid-tone
               lift; chroma  -100..100; L / a / b  a raw curve string (solarising, false colour)
   bw          True switches the Black-and-White tool on (mono stocks do this themselves)
-  grain       (iso, strength) or (iso, strength, colour) or (iso, strength, colour, size)
+  grain       (iso, strength[, colour[, size[, style]]]); strength to 200, size to 300, style one of
+              film, pushed, soft, reticulated, stipple, halftone, linescreen
   fx          Light Effects: dict(glow=, radius=, flare=, length=, angle=, threshold=)
   vig         (strength in stops, feather) or (strength, feather, roundness)
   tilt        tilt-shift blur: (amount, focus position %, focus width %, angle)
@@ -556,12 +557,44 @@ look(G, "Cold Grain", "colour", "Cold, thin colour under tight coarse grain.",
 look(G, "Warm Grain Portrait", "colour", "A portrait stock with its grain left in: soft colour, skin textured not smoothed.",
      "porcelain_400", Warmth=8, lab=dict(c=-0.15, mid=0.15), grain=(800, 65, 40))
 
+# Heavier and stylised: these use the Grain tool's Style and its ranges past 100.
+look(G, "Brutal Push", "heavy", "Three stops of push: enormous gathered grain, blocked shadows, burnt whites.",
+     S, PushPull=0.15, Contrast=-15, lab=dict(c=0.5, white=0.96), grain=(3200, 150, 0, 220, "pushed"), clarity=12)
+look(G, "Boulder Field", "heavy", "Film grain enlarged until the picture is built from pebbles.",
+     S, Contrast=-30, lab=dict(c=0.3), grain=(3200, 130, 0, 260, "film"))
+look(G, "Blizzard", "heavy", "High-key and snowed under: the image barely holding inside coarse white grain.",
+     S, Contrast=-45, lab=dict(mid=0.6, black=0.08), grain=(6400, 170, 0, 180, "pushed"))
+look(G, "Third Generation Dupe", "heavy", "A copy of a copy: soft clumps, thin colour, lifted blacks.",
+     "street_800", Saturation=-25, cg=dict(sh=(SEA, 5)), lab=dict(black=0.08, c=-0.1), grain=(1600, 120, 25, 170, "soft"))
+look(G, "Confetti Colour", "heavy", "Colour film falling apart into soft clouds of its three dyes.",
+     "heritage_gold", Saturation=10, lab=dict(c=0.2), grain=(1600, 100, 55, 160, "soft"))
+look(G, "Reticulated Mono", "stylised", "A negative shocked in cold water: the gelatin cracked into plates.",
+     S, Contrast=-30, lab=dict(c=0.3), grain=(1600, 110, 0, 130, "reticulated"))
+look(G, "Cracked Emulsion Colour", "stylised", "Reticulated colour stock: warm, crazed like old varnish.",
+     "twilight_160", Saturation=-10, cg=dict(hi=(AMBER, 4)), lab=dict(c=0.2), grain=(3200, 120, 0, 200, "reticulated"))
+look(G, "Mezzotint", "stylised", "Coarse two-tone grain carrying the whole tonal scale, as in a mezzotint.",
+     S, Contrast=-30, lab=dict(c=0.3), grain=(3200, 140, 0, 180, "stipple"))
+look(G, "Lith Stipple", "stylised", "Infectious development: hard black specks under peach-warm highlights.",
+     None, bw=True, ct=(2, 4, 6, 16), lab=dict(c=0.6, white=0.95), grain=(1600, 120, 0, 120, "stipple"), gain=1)
+look(G, "Newsprint Halftone", "screen", "The picture as a newspaper printed it: a fine dot screen in black ink.",
+     S, Contrast=-25, lab=dict(c=0.3), grain=(800, 200, 0, 100, "halftone"))
+look(G, "Pop Dots", "screen", "Saturated colour under coarse black dots.",
+     "vivid_chrome", Strength=70, Saturation=25, lab=dict(c=0.3, chroma=25), grain=(3200, 100, 0, 180, "halftone"))
+look(G, "Comic Print", "screen", "Cheap four-colour printing: flat hyper colour, coarse dots, heavy edges.",
+     lab=dict(a="1;0;0;0.4;0.1;0.6;0.9;1;1;", b="1;0;0;0.4;0.1;0.6;0.9;1;1;", c=0.3), grain=(1600, 100, 0, 150, "halftone"), clarity=30, gain=1)
+look(G, "Engraved Lines", "screen", "A banknote engraving: tone carried by the width of diagonal ink lines.",
+     S, Contrast=-25, lab=dict(c=0.3), grain=(1600, 200, 0, 120, "linescreen"), clarity=20)
+look(G, "Scan Lines Colour", "screen", "Bold diagonal lines over full colour.",
+     Saturation=15, lab=dict(c=0.3), grain=(3200, 100, 0, 160, "linescreen"))
+look(G, "Risograph Dots", "screen", "One fluorescent ink through a coarse dot screen.",
+     None, bw=True, ct=(38, -4, 20, 0), lab=dict(c=0.4, white=0.95), grain=(1600, 100, 0, 150, "halftone"), gain=1)
+
 # --------------------------------------------------------------------------------------------
 # Layers: stack on any look. They carry one section each and no Film Lab keys.
 # --------------------------------------------------------------------------------------------
 G = "Layers - Grain"
-def _grain(name, note, iso, strength, colour=0, size=100):
-    layer(G, name, note, Grain=dict(Enabled="true", ISO=iso, Strength=strength, Scale=size, Color=colour))
+def _grain(name, note, iso, strength, colour=0, size=100, style="film"):
+    layer(G, name, note, Grain=dict(Enabled="true", ISO=iso, Strength=strength, Scale=size, Color=colour, Style=style))
 _grain("Grain Whisper", "Barely-there grain to take the digital edge off.", 200, 12)
 _grain("Grain Fine 100", "Slow-film grain: fine and even.", 100, 25)
 _grain("Grain Classic 400", "The grain of an everyday medium-speed film.", 400, 35)
@@ -574,7 +607,21 @@ _grain("Grain Deep 6400", "The deepest setting: very coarse grain reaching far i
 _grain("Grain Colour Storm 3200", "Coarse grain with the three colour layers nearly independent.", 3200, 85, 90)
 _grain("Grain Small Format", "Half-frame and 16 mm: the same grain enlarged further.", 800, 50, 20, 100)
 _grain("Grain Medium Format", "Roll film: the same grain enlarged less.", 400, 30, 0, 45)
-layer(G, "Grain Off", "Removes grain.", Grain=dict(Enabled="false", ISO=400, Strength=0, Scale=100, Color=0))
+_grain("Grain Heavy Pushed", "Forced development: large, gathered grain, heavy in the shadows.", 1600, 100, 0, 130, "pushed")
+_grain("Grain Brutal", "Past anything film does: huge pushed grain over the whole picture.", 3200, 150, 0, 220, "pushed")
+_grain("Grain Boulders", "Enlarged film grain: every clump a visible pebble.", 3200, 130, 0, 260)
+_grain("Grain Soft Clouds", "Large soft clumps with no fine crystals: a degraded dupe.", 1600, 110, 0, 150, "soft")
+_grain("Grain Colour Confetti", "Soft colour clouds, each layer on its own.", 1600, 100, 55, 160, "soft")
+_grain("Grain Reticulated", "Gelatin cracked by a cold bath: plates divided by dark creases.", 1600, 100, 0, 100, "reticulated")
+_grain("Grain Reticulated Coarse", "Reticulation at a size you can read across a room.", 3200, 130, 0, 220, "reticulated")
+_grain("Grain Stipple", "Two-tone grain: every speck black or white.", 800, 90, 0, 100, "stipple")
+_grain("Grain Stipple Coarse", "Coarse two-tone grain, like a mezzotint.", 3200, 130, 0, 200, "stipple")
+_grain("Screen Halftone Fine", "A newspaper halftone screen laid over the picture.", 400, 100, 0, 100, "halftone")
+_grain("Screen Halftone Coarse", "Pop-art dots.", 3200, 100, 0, 180, "halftone")
+_grain("Screen Halftone Mono", "Coarse dots with the colour drained: pure ink on paper.", 1600, 200, 0, 150, "halftone")
+_grain("Screen Lines Fine", "An engraver's line screen.", 400, 100, 0, 100, "linescreen")
+_grain("Screen Lines Coarse", "Bold diagonal ink lines whose width carries the tone.", 3200, 100, 0, 160, "linescreen")
+layer(G, "Grain Off", "Removes grain.", Grain=dict(Enabled="false", ISO=400, Strength=0, Scale=100, Color=0, Style="film"))
 
 G = "Layers - Finish"
 def _vig(name, note, strength, feather, roundness=50):

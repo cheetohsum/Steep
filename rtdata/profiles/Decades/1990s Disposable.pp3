@@ -89,6 +89,7 @@ ISO=800
 Strength=45
 Scale=0
 Color=30
+Style=100
 
 [Light Effects]
 Enabled=false

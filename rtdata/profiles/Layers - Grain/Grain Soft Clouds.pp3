@@ -1,0 +1,11 @@
+# Large soft clumps with no fine crystals: a degraded dupe.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[Grain]
+Enabled=true
+ISO=1600
+Strength=110
+Scale=150
+Color=0
+Style=soft

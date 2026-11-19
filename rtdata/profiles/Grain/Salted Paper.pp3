@@ -90,6 +90,7 @@ ISO=1600
 Strength=70
 Scale=100
 Color=0
+Style=film
 
 [Light Effects]
 Enabled=false

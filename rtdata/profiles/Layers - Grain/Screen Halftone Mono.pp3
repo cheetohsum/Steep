@@ -1,0 +1,11 @@
+# Coarse dots with the colour drained: pure ink on paper.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[Grain]
+Enabled=true
+ISO=1600
+Strength=200
+Scale=150
+Color=0
+Style=halftone
