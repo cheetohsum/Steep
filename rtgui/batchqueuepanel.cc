@@ -399,6 +399,9 @@ void BatchQueuePanel::queueSizeChanged(int qsize, bool queueRunning, bool queueE
     }
 
     if (queueError) {
+        // The run stopped on this error; the remaining photos wait for the
+        // user to press Export Queue again.
+        queueShouldRun = false;
         Gtk::MessageDialog msgd (queueErrorMessage, true, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
         msgd.run ();
     }
