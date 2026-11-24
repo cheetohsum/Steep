@@ -4142,6 +4142,8 @@ void ImProcCoordinator::freeAll()
             delete previmg;
         }
 
+        previmg = nullptr;
+
         delete workimg;
         workimg = nullptr;
         workimgValid = false;
@@ -4189,17 +4191,26 @@ void ImProcCoordinator::setScale(int prevscale)
         pW = nW;
         pH = nH;
 
-        orig_prev = new Imagefloat(pW, pH);
-        oprevi = orig_prev;
-        oprevl = new LabImage(pW, pH);
-        nprevl = new LabImage(pW, pH);
+        // Out of memory here must not leave the new size recorded with
+        // half the buffers missing: the next pass would skip this block.
+        try {
+            orig_prev = new Imagefloat(pW, pH);
+            oprevi = orig_prev;
+            oprevl = new LabImage(pW, pH);
+            nprevl = new LabImage(pW, pH);
 
-        //ncie is only used in ImProcCoordinator::updatePreviewImage, it will be allocated on first use and deleted if not used anymore
-        previmg = new Image8(pW, pH);
-        workimg = new Image8(pW, pH);
-        workimgValid = false;
+            //ncie is only used in ImProcCoordinator::updatePreviewImage, it will be allocated on first use and deleted if not used anymore
+            previmg = new Image8(pW, pH);
+            workimg = new Image8(pW, pH);
+            workimgValid = false;
 
-        allocated = true;
+            allocated = true;
+        } catch (...) {
+            allocated = true;    // let freeAll release what was made
+            freeAll();
+            pW = pH = -1;
+            throw;
+        }
     }
 
     scale = prevscale;
