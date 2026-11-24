@@ -56,4 +56,7 @@ public:
     void enabledChanged() override;
 
     Adjuster* getStrengthSlider() { return strength; }
+    // True for this tool's own history events (they are registered at
+    // runtime, so callers cannot name them); the Mask pane bridge uses it.
+    bool ownsEvent(int id) const { return id == int(EvGrainEnabled) || id == int(EvGrainStrength) || id == int(EvGrainISO) || id == int(EvGrainScale) || id == int(EvGrainColor); }
 };

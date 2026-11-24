@@ -1709,6 +1709,17 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
                 spot.labgridBHigh = def.labgridBHigh;
             } else if (panel == lcurve) {
                 spot.llcurve = def.llcurve;
+            } else if (panel == texture || panel == clarity) {
+                spot.lcamount = def.lcamount;
+                spot.lcradius = def.lcradius;
+            } else if (panel == grain) {
+                spot.strengr = def.strengr;
+                spot.isogr = def.isogr;
+                spot.scalegr = def.scalegr;
+            } else if (panel == dehaze) {
+                spot.dehaz = def.dehaz;
+                spot.depth = def.depth;
+                spot.dehazeSaturation = def.dehazeSaturation;
             }
         }
         pendingMaskGroupReset_.clear();
@@ -1716,6 +1727,10 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
     }
 
     if (bridgeColourToSpot(params, id, spot)) {
+        bridged = true;
+    }
+
+    if (bridgeDetailToSpot(params, id, spot)) {
         bridged = true;
     }
 
@@ -1848,6 +1863,11 @@ void ToolPanelCoordinator::saveColourMaskGlobals(const ProcParams& params)
     savedHSV_ = params.hsvequalizer;
     savedPointColor_ = params.pointcolor;
     savedRGBCurves_ = params.rgbCurves;
+    savedTexture_ = params.texture;
+    savedClarity_ = params.clarity;
+    savedGrain_ = params.grain;
+    savedDehaze_ = params.dehaze;
+    savedDenoise_ = params.dirpyrDenoise;
 }
 
 void ToolPanelCoordinator::restoreColourMaskGlobals(ProcParams& params) const
@@ -1857,6 +1877,77 @@ void ToolPanelCoordinator::restoreColourMaskGlobals(ProcParams& params) const
     params.hsvequalizer = savedHSV_;
     params.pointcolor = savedPointColor_;
     params.rgbCurves = savedRGBCurves_;
+    params.texture = savedTexture_;
+    params.clarity = savedClarity_;
+    params.grain = savedGrain_;
+    params.dehaze = savedDehaze_;
+    params.dirpyrDenoise = savedDenoise_;
+}
+
+bool ToolPanelCoordinator::isDetailBridgeEvent(int id) const
+{
+    using namespace rtengine;
+    return (texture && texture->ownsEvent(id)) || (clarity && clarity->ownsEvent(id))
+           || (grain && grain->ownsEvent(id)) || (dehaze && dehaze->ownsEvent(id));
+}
+
+bool ToolPanelCoordinator::bridgeDetailToSpot(ProcParams* params, int id,
+                                              rtengine::procparams::LocallabParams::LocallabSpot& spot) const
+{
+    using namespace rtengine;
+    bool bridged = false;
+
+    // Texture and Clarity -> the spot's local contrast (the same unsharp-mask
+    // local contrast the global tools run, at the tool's own radius). A spot
+    // has one such slot, so the two share it: amounts add, the radius is
+    // their amount-weighted mean. The spot's amount runs 0..1 only, so the
+    // softening half of either slider has no per-mask form and reads as 0.
+    if ((texture && texture->ownsEvent(id)) || (clarity && clarity->ownsEvent(id))) {
+        const double tA = params->texture.enabled ? std::max(0.0, params->texture.amount) : 0.0;
+        const double cA = params->clarity.enabled ? std::max(0.0, params->clarity.amount) : 0.0;
+        spot.lcamount = std::min(1.0, (tA + cA) / 100.0);
+        if (tA + cA > 0.0) {
+            spot.lcradius = static_cast<int>(std::lround(
+                (tA * params->texture.radius + cA * params->clarity.radius) / (tA + cA)));
+            spot.localcontMethod = "loc";
+            spot.lcdarkness = 1.0;
+            spot.lclightness = 1.0;
+            spot.expcontrast = true;
+            spot.visicontrast = true;
+        }
+        bridged = true;
+    }
+
+    // Grain -> the spot's film grain (the blur block's older grain, same ISO
+    // and size scales; the dye-colour slider has no spot form). Measured
+    // headlessly (2026-11-23, flat and textured patches): the spot's grain
+    // adds twice the noise of the global tool at the same strength, so it
+    // gets half.
+    if (grain && grain->ownsEvent(id)) {
+        spot.strengr = params->grain.enabled ? (params->grain.strength + 1) / 2 : 0;
+        spot.isogr = params->grain.iso;
+        spot.scalegr = params->grain.scale;
+        if (spot.strengr > 0) {
+            spot.blMethod = "blur";
+            spot.expblur = true;
+            spot.visiblur = true;
+        }
+        bridged = true;
+    }
+
+    // Dehaze -> the spot's dehaze, which runs the very same dehaze routine.
+    if (dehaze && dehaze->ownsEvent(id)) {
+        spot.dehaz = params->dehaze.enabled ? params->dehaze.strength : 0;
+        spot.depth = params->dehaze.depth;
+        spot.dehazeSaturation = params->dehaze.saturation;
+        if (spot.dehaz != 0) {
+            spot.expreti = true;
+            spot.visireti = true;
+        }
+        bridged = true;
+    }
+
+    return bridged;
 }
 
 void ToolPanelCoordinator::setGlobalOnlyToolsSensitive(bool sensitive)
@@ -1865,17 +1956,20 @@ void ToolPanelCoordinator::setGlobalOnlyToolsSensitive(bool sensitive)
     // ever recolour the whole photo. Greyed out there, with the reason.
     const Glib::ustring why = sensitive ? Glib::ustring() : M("MASK_GLOBAL_ONLY_TOOL_TOOLTIP");
     for (ToolPanel* panel : std::initializer_list<ToolPanel*>{
-             hsvequalizer, pointcolor, rgbcurves, dirpyrdenoise, dehaze, aidenoise, preprocess}) {
+             hsvequalizer, pointcolor, rgbcurves, dirpyrdenoise, aidenoise, preprocess,
+             lighteffects, pcvignette, tiltshift, filmPresets, doubleExposure}) {
         auto* foldable = dynamic_cast<FoldableToolPanel*>(panel);
         if (foldable && foldable->getExpander()) {
             foldable->getExpander()->set_sensitive(sensitive);
             foldable->getExpander()->set_tooltip_text(why);
         }
     }
-    // Whole groups with nothing that follows a mask (grain, light effects,
-    // vignette, tilt-shift, Film Lab, double exposure; lens corrections),
-    // and the strips that drive them.
-    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{effectsGroup, calibrationGroup}) {
+    // Calibration has nothing that follows a mask; nor do the Detail and
+    // Effects strips (they also drive sharpening and the vignette). Texture,
+    // Clarity, Grain and Dehaze stay live: they follow it. Noise reduction
+    // does not: the spot denoiser measured inert even at full strength
+    // (2026-11-23), so it stays global-only.
+    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{calibrationGroup}) {
         if (w) {
             w->set_sensitive(sensitive);
             w->set_tooltip_text(why);
@@ -1963,6 +2057,35 @@ void ToolPanelCoordinator::loadSpotIntoGlobalTools()
         cg.enabled = cg.globalSat > 0.0 || cg.shadowsSat > 0.0 || cg.highlightsSat > 0.0;
     }
 
+    // The detail and effects tools that follow a mask, shown with the spot's
+    // values (the inverse of bridgeDetailToSpot; local contrast reads back as
+    // Texture below a 50 px radius, Clarity above).
+    {
+        const bool lc = spot.expcontrast && spot.localcontMethod == "loc" && spot.lcamount > 0.0;
+        const bool fine = spot.lcradius <= 50;
+        tempParams.texture.enabled = lc && fine;
+        tempParams.texture.amount = lc && fine ? spot.lcamount * 100.0 : 0.0;
+        if (lc && fine) {
+            tempParams.texture.radius = spot.lcradius;
+        }
+        tempParams.clarity.enabled = lc && !fine;
+        tempParams.clarity.amount = lc && !fine ? spot.lcamount * 100.0 : 0.0;
+        if (lc && !fine) {
+            tempParams.clarity.radius = spot.lcradius;
+        }
+
+        tempParams.grain.enabled = spot.expblur && spot.strengr > 0;
+        tempParams.grain.strength = std::min(100, spot.strengr * 2);
+        tempParams.grain.iso = spot.isogr;
+        tempParams.grain.scale = spot.scalegr;
+
+        tempParams.dehaze.enabled = spot.expreti && spot.dehaz != 0;
+        tempParams.dehaze.strength = spot.dehaz;
+        tempParams.dehaze.depth = spot.depth;
+        tempParams.dehaze.saturation = static_cast<int>(std::lround(spot.dehazeSaturation));
+
+    }
+
     ipc->endUpdateParams(0);  // release lock, no reprocess
 
     // Update widget display (listener disabled to prevent recursive panelChanged)
@@ -1993,6 +2116,14 @@ void ToolPanelCoordinator::loadSpotIntoGlobalTools()
     colorgrading->disableListener();
     colorgrading->read(&tempParams);
     colorgrading->enableListener();
+
+    for (ToolPanel* panel : std::initializer_list<ToolPanel*>{texture, clarity, grain, dehaze}) {
+        if (panel) {
+            panel->disableListener();
+            panel->read(&tempParams);
+            panel->enableListener();
+        }
+    }
 }
 
 void ToolPanelCoordinator::resetEditGroupsToDefault()
@@ -2199,7 +2330,8 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                 blackwhite->read(&restored);
                 blackwhite->enableListener();
                 for (ToolPanel* panel : std::initializer_list<ToolPanel*>{
-                         whitebalance, colorgrading, hsvequalizer, pointcolor, rgbcurves}) {
+                         whitebalance, colorgrading, hsvequalizer, pointcolor, rgbcurves,
+                         texture, clarity, grain, dehaze}) {
                     if (panel) {
                         panel->disableListener();
                         panel->read(&restored);
@@ -4404,6 +4536,7 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
             || eventId == rtengine::EvVibranceEnabled || eventId == rtengine::EvVibranceProtectSkins
             || eventId == rtengine::EvVibranceAvoidColorShift || eventId == rtengine::EvVibrancePastSatTog
             || eventId == rtengine::EvVibrancePastSatThreshold
+            || isDetailBridgeEvent(eventId)
             || (eventId == rtengine::EvProfileChanged && !pendingMaskGroupReset_.empty()));
     if (colourBridgeEvent && bridgeGlobalToSpot(params, event)) {
         changeFlags = M_AUTOEXP;
