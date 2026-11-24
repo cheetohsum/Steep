@@ -168,6 +168,10 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     activ(true),
     avoidneg(true),
     blwh(false),
+    bwMixer{33, 33, 33, 33, 33, 33, 33, 33},
+    bwTone{0, 0, 0, 0, 0, 100},
+    bwFilter("None"),
+    bwSetting("RGB-Rel"),
     recurs(false),
     laplac(true),
     deltae(true),
@@ -760,6 +764,8 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     decayd(2.),
     isogr(400),
     strengr(0),
+    colorgr(-1),
+    rgbcurveGamma(false),
     scalegr(100),
     divgr(1.),
     epsbl(0),
@@ -2182,6 +2188,10 @@ bool LocallabParams::LocallabSpot::operator ==(const LocallabSpot& other) const
         && activ == other.activ
         && avoidneg == other.avoidneg
         && blwh == other.blwh
+        && bwMixer == other.bwMixer
+        && bwTone == other.bwTone
+        && bwFilter == other.bwFilter
+        && bwSetting == other.bwSetting
         && recurs == other.recurs
         && laplac == other.laplac
         && deltae == other.deltae
@@ -2453,6 +2463,8 @@ bool LocallabParams::LocallabSpot::operator ==(const LocallabSpot& other) const
         && decayd == other.decayd
         && isogr == other.isogr
         && strengr == other.strengr
+        && colorgr == other.colorgr
+        && rgbcurveGamma == other.rgbcurveGamma
         && scalegr == other.scalegr
         && divgr == other.divgr
         && epsbl == other.epsbl
@@ -3168,6 +3180,12 @@ void LoadUtil::controlSpotSettings()
     assignFromKeyfile(keyFile, "Locallab", "Activ_" + index_str, spot.activ, spotEdited.activ);
     assignFromKeyfile(keyFile, "Locallab", "Avoidneg_" + index_str, spot.avoidneg, spotEdited.avoidneg);
     assignFromKeyfile(keyFile, "Locallab", "Blwh_" + index_str, spot.blwh, spotEdited.blwh);
+    assignFromKeyfile(keyFile, "Locallab", "BwMixer_" + index_str, spot.bwMixer, spotEdited.bwMixer);
+    assignFromKeyfile(keyFile, "Locallab", "BwTone_" + index_str, spot.bwTone, spotEdited.bwTone);
+    spot.bwMixer.resize(8, 33);
+    spot.bwTone.resize(6, 0);
+    assignFromKeyfile(keyFile, "Locallab", "BwFilter_" + index_str, spot.bwFilter, spotEdited.bwFilter);
+    assignFromKeyfile(keyFile, "Locallab", "BwSetting_" + index_str, spot.bwSetting, spotEdited.bwSetting);
     assignFromKeyfile(keyFile, "Locallab", "Recurs_" + index_str, spot.recurs, spotEdited.recurs);
     assignFromKeyfile(keyFile, "Locallab", "Laplac_" + index_str, spot.laplac, spotEdited.laplac);
     assignFromKeyfile(keyFile, "Locallab", "Deltae_" + index_str, spot.deltae, spotEdited.deltae);
@@ -3555,6 +3573,8 @@ void LoadUtil::blurNoise()
     assignFromKeyfile(keyFile, "Locallab", "Decayd_" + index_str, spot.decayd, spotEdited.decayd);
     assignFromKeyfile(keyFile, "Locallab", "Isogr_" + index_str, spot.isogr, spotEdited.isogr);
     assignFromKeyfile(keyFile, "Locallab", "Strengr_" + index_str, spot.strengr, spotEdited.strengr);
+    assignFromKeyfile(keyFile, "Locallab", "Colorgr_" + index_str, spot.colorgr, spotEdited.colorgr);
+    assignFromKeyfile(keyFile, "Locallab", "RGBCurveGamma_" + index_str, spot.rgbcurveGamma, spotEdited.rgbcurveGamma);
     assignFromKeyfile(keyFile, "Locallab", "Scalegr_" + index_str, spot.scalegr, spotEdited.scalegr);
     assignFromKeyfile(keyFile, "Locallab", "Divgr_" + index_str, spot.divgr, spotEdited.divgr);
     assignFromKeyfile(keyFile, "Locallab", "Epsbl_" + index_str, spot.epsbl, spotEdited.epsbl);
@@ -4436,6 +4456,10 @@ void SaveUtil::controlSpotSettings()
     saveToKeyfile(!pedited || spot_edited->activ, "Locallab", "Activ_" + index_str, spot.activ, keyFile);
     saveToKeyfile(!pedited || spot_edited->avoidneg, "Locallab", "Avoidneg_" + index_str, spot.avoidneg, keyFile);
     saveToKeyfile(!pedited || spot_edited->blwh, "Locallab", "Blwh_" + index_str, spot.blwh, keyFile);
+    saveToKeyfile(!pedited || spot_edited->bwMixer, "Locallab", "BwMixer_" + index_str, spot.bwMixer, keyFile);
+    saveToKeyfile(!pedited || spot_edited->bwTone, "Locallab", "BwTone_" + index_str, spot.bwTone, keyFile);
+    saveToKeyfile(!pedited || spot_edited->bwFilter, "Locallab", "BwFilter_" + index_str, spot.bwFilter, keyFile);
+    saveToKeyfile(!pedited || spot_edited->bwSetting, "Locallab", "BwSetting_" + index_str, spot.bwSetting, keyFile);
     saveToKeyfile(!pedited || spot_edited->recurs, "Locallab", "Recurs_" + index_str, spot.recurs, keyFile);
     saveToKeyfile(!pedited || spot_edited->laplac, "Locallab", "Laplac_" + index_str, spot.laplac, keyFile);
     saveToKeyfile(!pedited || spot_edited->deltae, "Locallab", "Deltae_" + index_str, spot.deltae, keyFile);
@@ -4724,6 +4748,8 @@ void SaveUtil::blurNoise()
         saveToKeyfile(!pedited || spot_edited->decayd, "Locallab", "Decayd_" + index_str, spot.decayd, keyFile);
         saveToKeyfile(!pedited || spot_edited->isogr, "Locallab", "Isogr_" + index_str, spot.isogr, keyFile);
         saveToKeyfile(!pedited || spot_edited->strengr, "Locallab", "Strengr_" + index_str, spot.strengr, keyFile);
+        saveToKeyfile(!pedited || spot_edited->colorgr, "Locallab", "Colorgr_" + index_str, spot.colorgr, keyFile);
+        saveToKeyfile(!pedited || spot_edited->rgbcurveGamma, "Locallab", "RGBCurveGamma_" + index_str, spot.rgbcurveGamma, keyFile);
         saveToKeyfile(!pedited || spot_edited->scalegr, "Locallab", "Scalegr_" + index_str, spot.scalegr, keyFile);
         saveToKeyfile(!pedited || spot_edited->divgr, "Locallab", "Divgr_" + index_str, spot.divgr, keyFile);
         saveToKeyfile(!pedited || spot_edited->epsbl, "Locallab", "Epsbl_" + index_str, spot.epsbl, keyFile);

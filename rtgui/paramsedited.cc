@@ -1563,6 +1563,10 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).activ = locallab.spots.at(j).activ && pSpot.activ == otherSpot.activ;
                 locallab.spots.at(j).avoidneg = locallab.spots.at(j).avoidneg && pSpot.avoidneg == otherSpot.avoidneg;
                 locallab.spots.at(j).blwh = locallab.spots.at(j).blwh && pSpot.blwh == otherSpot.blwh;
+                locallab.spots.at(j).bwMixer = locallab.spots.at(j).bwMixer && pSpot.bwMixer == otherSpot.bwMixer;
+                locallab.spots.at(j).bwTone = locallab.spots.at(j).bwTone && pSpot.bwTone == otherSpot.bwTone;
+                locallab.spots.at(j).bwFilter = locallab.spots.at(j).bwFilter && pSpot.bwFilter == otherSpot.bwFilter;
+                locallab.spots.at(j).bwSetting = locallab.spots.at(j).bwSetting && pSpot.bwSetting == otherSpot.bwSetting;
                 locallab.spots.at(j).recurs = locallab.spots.at(j).recurs && pSpot.recurs == otherSpot.recurs;
                 locallab.spots.at(j).laplac = locallab.spots.at(j).laplac && pSpot.laplac == otherSpot.laplac;
                 locallab.spots.at(j).deltae = locallab.spots.at(j).deltae && pSpot.deltae == otherSpot.deltae;
@@ -1829,6 +1833,8 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).decayd = locallab.spots.at(j).decayd && pSpot.decayd == otherSpot.decayd;
                 locallab.spots.at(j).isogr = locallab.spots.at(j).isogr && pSpot.isogr == otherSpot.isogr;
                 locallab.spots.at(j).strengr = locallab.spots.at(j).strengr && pSpot.strengr == otherSpot.strengr;
+                locallab.spots.at(j).colorgr = locallab.spots.at(j).colorgr && pSpot.colorgr == otherSpot.colorgr;
+                locallab.spots.at(j).rgbcurveGamma = locallab.spots.at(j).rgbcurveGamma && pSpot.rgbcurveGamma == otherSpot.rgbcurveGamma;
                 locallab.spots.at(j).scalegr = locallab.spots.at(j).scalegr && pSpot.scalegr == otherSpot.scalegr;
                 locallab.spots.at(j).divgr = locallab.spots.at(j).divgr && pSpot.divgr == otherSpot.divgr;
                 locallab.spots.at(j).epsbl = locallab.spots.at(j).epsbl && pSpot.epsbl == otherSpot.epsbl;
@@ -4664,6 +4670,22 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
             toEdit.locallab.spots.at(i).blwh = mods.locallab.spots.at(i).blwh;
         }
 
+        if (locallab.spots.at(i).bwMixer) {
+            toEdit.locallab.spots.at(i).bwMixer = mods.locallab.spots.at(i).bwMixer;
+        }
+
+        if (locallab.spots.at(i).bwTone) {
+            toEdit.locallab.spots.at(i).bwTone = mods.locallab.spots.at(i).bwTone;
+        }
+
+        if (locallab.spots.at(i).bwFilter) {
+            toEdit.locallab.spots.at(i).bwFilter = mods.locallab.spots.at(i).bwFilter;
+        }
+
+        if (locallab.spots.at(i).bwSetting) {
+            toEdit.locallab.spots.at(i).bwSetting = mods.locallab.spots.at(i).bwSetting;
+        }
+
         if (locallab.spots.at(i).recurs) {
             toEdit.locallab.spots.at(i).recurs = mods.locallab.spots.at(i).recurs;
         }
@@ -5694,6 +5716,14 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
         if (locallab.spots.at(i).strengr) {
             toEdit.locallab.spots.at(i).strengr = mods.locallab.spots.at(i).strengr;
+        }
+
+        if (locallab.spots.at(i).colorgr) {
+            toEdit.locallab.spots.at(i).colorgr = mods.locallab.spots.at(i).colorgr;
+        }
+
+        if (locallab.spots.at(i).rgbcurveGamma) {
+            toEdit.locallab.spots.at(i).rgbcurveGamma = mods.locallab.spots.at(i).rgbcurveGamma;
         }
 
         if (locallab.spots.at(i).scalegr) {
@@ -9636,6 +9666,10 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     activ(v),
     avoidneg(v),
     blwh(v),
+    bwMixer(v),
+    bwTone(v),
+    bwFilter(v),
+    bwSetting(v),
     recurs(v),
     laplac(v),
     deltae(v),
@@ -9898,6 +9932,8 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     decayd(v),
     isogr(v),
     strengr(v),
+    colorgr(v),
+    rgbcurveGamma(v),
     scalegr(v),
     divgr(v),
     epsbl(v),
@@ -10507,6 +10543,10 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     activ = v;
     avoidneg = v;
     blwh = v;
+    bwMixer = v;
+    bwTone = v;
+    bwFilter = v;
+    bwSetting = v;
     recurs = v;
     laplac = v;
     deltae = v;
@@ -10772,6 +10812,8 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     decayd = v;
     isogr = v;
     strengr = v;
+    colorgr = v;
+    rgbcurveGamma = v;
     scalegr = v;
     divgr = v;
     epsbl = v;

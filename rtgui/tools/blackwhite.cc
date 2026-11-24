@@ -1321,3 +1321,20 @@ Glib::ustring BlackWhite::getFilterString()
 
     return retVal;
 }
+
+void BlackWhite::setMaskMode(bool maskMode, const Glib::ustring& why)
+{
+    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{
+             method, algo, autoch, beforeCurveMode, afterCurveMode}) {
+        if (w) {
+            w->set_sensitive(!maskMode);
+            w->set_tooltip_text(why);
+        }
+    }
+    for (CurveEditorGroup* g : {luminanceCEG, beforeCurveCEG, afterCurveCEG}) {
+        if (g) {
+            g->set_sensitive(!maskMode);
+            g->set_tooltip_text(why);
+        }
+    }
+}

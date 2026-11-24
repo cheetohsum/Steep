@@ -53,6 +53,8 @@ public:
     void setEditProvider (EditDataProvider *provider) override;
 
     void autoch_toggled  ();
+    // On the Mask pane: greys out the controls that only exist for the whole photo.
+    void setMaskMode(bool maskMode, const Glib::ustring& why);
     void neutral_pressed ();
 
     void updateRGBLabel      ();

@@ -464,8 +464,12 @@ void ImProcFunctions::lab2monitorRgb(LabImage* lab, Image8* image)
 // on screen and exported neutral. Every pipeline now asks this.
 bool ImProcFunctions::bwForced(const procparams::ProcParams& params, bool autili, bool butili)
 {
+    // A print tone is colour the conversion adds on purpose, and an Amount
+    // below 100 blends the photo's own colour back in; forcing neutral threw
+    // both away, which left Amount changing brightness only.
     const bool preservePerceptualPrintTone =
-        params.blackwhite.method == "Perceptual" && params.blackwhite.tone != 0;
+        (params.blackwhite.method == "Perceptual" && params.blackwhite.tone != 0)
+        || params.blackwhite.strength < 100;
     const bool cam02 =
         params.colorappearance.enabled && params.colorappearance.modelmethod == "02";
 

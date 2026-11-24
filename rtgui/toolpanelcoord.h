@@ -357,6 +357,7 @@ private:
     bool bridgeDetailToSpot(rtengine::procparams::ProcParams* params, int id,
                             rtengine::procparams::LocallabParams::LocallabSpot& spot) const;
     bool isDetailBridgeEvent(int id) const;
+    bool isBWBridgeEvent(int id) const;
     void saveColourMaskGlobals(const rtengine::procparams::ProcParams& params);
     void restoreColourMaskGlobals(rtengine::procparams::ProcParams& params) const;
     bool bridgeColourToSpot(rtengine::procparams::ProcParams* params, int id,
