@@ -337,6 +337,21 @@ private:
     rtengine::procparams::SHParams savedSH_;
     rtengine::procparams::BlackWhiteParams savedBlackWhite_;
     rtengine::procparams::LCurveParams savedLabCurve_;
+    // The colour tools on the Mask pane. White balance and Colour Grading are
+    // bridged into the selected spot (warm + colour-correction grid); the
+    // mixer, Point Color and RGB curves have no per-spot form and are greyed
+    // out there. All of them are put back after every write, like the above,
+    // so nothing done on the Mask pane recolours the whole photo.
+    rtengine::procparams::WBParams savedWB_;
+    rtengine::procparams::ColorGradingParams savedColorGrading_;
+    rtengine::procparams::HSVEqualizerParams savedHSV_;
+    rtengine::procparams::PointColorParams savedPointColor_;
+    rtengine::procparams::RGBCurvesParams savedRGBCurves_;
+    void saveColourMaskGlobals(const rtengine::procparams::ProcParams& params);
+    void restoreColourMaskGlobals(rtengine::procparams::ProcParams& params) const;
+    bool bridgeColourToSpot(rtengine::procparams::ProcParams* params, int id,
+                            rtengine::procparams::LocallabParams::LocallabSpot& spot) const;
+    void setGlobalOnlyColourToolsSensitive(bool sensitive);
 
     bool bridgeGlobalToSpot(rtengine::procparams::ProcParams* params, const rtengine::ProcEvent& event);
     void loadSpotIntoGlobalTools();

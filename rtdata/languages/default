@@ -336,6 +336,7 @@ GENERAL_SEARCH;Search
 MAIN_MENU_SEC_COLOUR;Colour management
 MAIN_MENU_SEC_OVERLAYS;Overlays
 MAIN_MENU_SEC_WINDOWS;Windows
+MASK_GLOBAL_ONLY_TOOL_TOOLTIP;This tool has no per-mask version, so it always changes the whole photo. Set it on the Edit pane.
 PREFERENCES_EXTENSION;Extension
 PREFERENCES_FOUND;Found:
 QUEUE_EXPORT_BUTTON;Export queue
