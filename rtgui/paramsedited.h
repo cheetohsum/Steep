@@ -829,6 +829,7 @@ public:
         bool strengr;
         bool colorgr;
         bool rgbcurveGamma;
+        bool scopeOpen;
         bool scalegr;
         bool divgr;
         bool epsbl;

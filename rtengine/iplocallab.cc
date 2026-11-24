@@ -899,6 +899,7 @@ struct local_params {
     bool avoidneg;
     bool blwh;
     bool blwhmix = false; // the spot converts with its own hue mixer (see Lab_Local)
+    bool scopeopen = false; // edits ignore colour similarity to the spot centre: the mask alone decides where they land
     bool fftma;
     float blurma;
     float contma;
@@ -2062,6 +2063,7 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
     lp.avoidneg = locallab.spots.at(sp).avoidneg;
     lp.blwh = locallab.spots.at(sp).blwh;
     lp.senscolor = (int) locallab.spots.at(sp).colorscope;
+    lp.scopeopen = locallab.spots.at(sp).scopeOpen;
     //replace scope color vibrance shadows
 /*    lp.sens = lp.senscolor;
     lp.sensv = lp.senscolor;
@@ -5775,9 +5777,9 @@ void ImProcFunctions::DeNoise_Local(int call, const struct local_params& lp, Lab
                     const float dEL = std::sqrt(0.9f * SQR(refa - maskptr->a[y][x]) + 0.9f * SQR(refb - maskptr->b[y][x]) + 1.2f * SQR(lumaref - maskptr->L[y][x])) * r327d68;
                     const float dEa = std::sqrt(1.2f * SQR(refa - maskptr->a[y][x]) + 1.f * SQR(refb - maskptr->b[y][x]) + 0.8f * SQR(lumaref - maskptr->L[y][x])) * r327d68;
                     const float dEb = std::sqrt(1.f * SQR(refa - maskptr->a[y][x]) + 1.2f * SQR(refb - maskptr->b[y][x]) + 0.8f * SQR(lumaref - maskptr->L[y][x])) * r327d68;
-                    reducdEL = SQR(calcreducdE(dEL, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensden));
-                    reducdEa = SQR(calcreducdE(dEa, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensden));
-                    reducdEb = SQR(calcreducdE(dEb, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensden));
+                    reducdEL = SQR((lp.scopeopen ? 1.f : calcreducdE(dEL, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensden)));
+                    reducdEa = SQR((lp.scopeopen ? 1.f : calcreducdE(dEa, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensden)));
+                    reducdEb = SQR((lp.scopeopen ? 1.f : calcreducdE(dEb, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensden)));
                 }
 
                 float difL, difa, difb;
@@ -5935,9 +5937,9 @@ void ImProcFunctions::DeNoise_Local2(const struct local_params& lp, LabImage* or
                     const float dEL = std::sqrt(0.9f * SQR(refa - maskptr->a[y][x]) + 0.9f * SQR(refb - maskptr->b[y][x]) + 1.2f * SQR(lumaref - maskptr->L[y][x])) * r327d68;
                     const float dEa = std::sqrt(1.2f * SQR(refa - maskptr->a[y][x]) + 1.f * SQR(refb - maskptr->b[y][x]) + 0.8f * SQR(lumaref - maskptr->L[y][x])) * r327d68;
                     const float dEb = std::sqrt(1.f * SQR(refa - maskptr->a[y][x]) + 1.2f * SQR(refb - maskptr->b[y][x]) + 0.8f * SQR(lumaref - maskptr->L[y][x])) * r327d68;
-                    reducdEL = SQR(calcreducdE(dEL, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensden));
-                    reducdEa = SQR(calcreducdE(dEa, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensden));
-                    reducdEb = SQR(calcreducdE(dEb, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensden));
+                    reducdEL = SQR((lp.scopeopen ? 1.f : calcreducdE(dEL, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensden)));
+                    reducdEa = SQR((lp.scopeopen ? 1.f : calcreducdE(dEa, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensden)));
+                    reducdEb = SQR((lp.scopeopen ? 1.f : calcreducdE(dEb, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensden)));
                 }
 
                 float difL, difa, difb;
@@ -6038,7 +6040,7 @@ void ImProcFunctions::InverseReti_Local(const struct local_params & lp, const fl
 
                 float rL = origblur->L[y][x] / 327.68f;
                 float dE = std::sqrt(kab * SQR(refa - origblur->a[y][x] / 327.68f) + kab * SQR(refb - origblur->b[y][x] / 327.68f) + kL * SQR(lumaref - rL));
-                float reducdE = calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensh);
+                float reducdE = (lp.scopeopen ? 1.f : calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensh));
                 if(lp.fullim == 3 ) {//disable scope
                     reducdE = 1.f;
                 }
@@ -6185,7 +6187,7 @@ void ImProcFunctions::InverseBlurNoise_Local(LabImage * originalmask, const stru
                     float chrodelta2 = SQR(std::sqrt(SQR(maskptr->a[y][x]) + SQR(maskptr->b[y][x])) - (chromaref * 327.68f));
                     float huedelta2 = abdelta2 - chrodelta2;
                     float dE = std::sqrt(kab * (kch * chrodelta2 + kH * huedelta2) + kL * SQR(refL - maskptr->L[y][x]));
-                    reducdE = calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensbn);
+                    reducdE = (lp.scopeopen ? 1.f : calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensbn));
                     if(lp.fullim == 3 ) {//disabled scope
                         reducdE = 1.f;
                     }
@@ -8041,7 +8043,7 @@ void ImProcFunctions::InverseSharp_Local(float **loctemp, const float hueref, co
                 const float huedelta2 = abdelta2 - chrodelta2;
                 const float dE = std::sqrt(kab * (kch * chrodelta2 + kH * huedelta2) + kL * SQR(refL - origblur->L[y][x]));
 
-                float reducdE = calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.senssha);
+                float reducdE = (lp.scopeopen ? 1.f : calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.senssha));
                 if(lp.fullim == 3 ) {//disable scope
                     reducdE = 1.f;
                 }
@@ -8197,7 +8199,7 @@ void ImProcFunctions::Sharp_Local(int call, float **loctemp, int senstype, const
                 const float huedelta2 = abdelta2 - chrodelta2;
                 const float dE = std::sqrt(kab * (kch * chrodelta2 + kH * huedelta2) + kL * SQR(refL - origblur->L[y][x]));
 
-                float reducdE = calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, varsens);
+                float reducdE = (lp.scopeopen ? 1.f : calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, varsens));
                 float reducview = reducdE;
                 reducdE *= localFactor;
                 if(lp.fullim == 3 ) {//disable scope
@@ -8519,7 +8521,7 @@ void ImProcFunctions::transit_shapedetect_retinex(int call, int senstype, LabIma
 
                     float cli, clc;
                     //take into account for Global
-                    float reducdE = calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, iteratglobal, limscope, varsensglobal) / 100.f;
+                    float reducdE = (lp.scopeopen ? 1.f : calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, iteratglobal, limscope, varsensglobal)) / 100.f;
                     
 
                     previewint = reducdE * 10000.f * lp.colorde; //settings->previewselection;
@@ -8829,7 +8831,7 @@ void ImProcFunctions::transit_shapedetect(int senstype, const LabImage * bufexpo
 
                 const float dE = rsob + std::sqrt(kab * (SQR(refa - maskptr->a[y - ystart][x - xstart]) + SQR(refb - maskptr->b[y - ystart][x - xstart])) + kL * SQR(refL - maskptr->L[y - ystart][x - xstart]));
                 const float clc = (previewcb) ? settings->previewselection * 100.f : bufchro[y - ystart][x - xstart];
-                float reducdE = calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, varsens);
+                float reducdE = (lp.scopeopen ? 1.f : calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, varsens));
                 if(lp.fullim == 3 ) {//disable scope
                     reducdE = 1.f;
                 }
@@ -9126,7 +9128,7 @@ void ImProcFunctions::InverseColorLight_Local(bool tonequ, bool tonecurv, int sp
                         const float chrodelta2 = SQR(std::sqrt(SQR(maskptr->a[y][x]) + SQR(maskptr->b[y][x])) - (chromaref * 327.68f));
                         const float huedelta2 = abdelta2 - chrodelta2;
                         const float dE = std::sqrt(kab * (kch * chrodelta2 + kH * huedelta2) + kL * SQR(refL - maskptr->L[y][x]));
-                        reducdE = calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, varsens);
+                        reducdE = (lp.scopeopen ? 1.f : calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, varsens));
                     }
 
                     switch (zone) {
@@ -9686,7 +9688,7 @@ void ImProcFunctions::BlurNoise_Local(LabImage *tmp1, LabImage * originalmask, c
                 const float chrodelta2 = SQR(std::sqrt(SQR(maskptr->a[y][x]) + SQR(maskptr->b[y][x])) - chromaref * 327.68f);
                 const float huedelta2 = abdelta2 - chrodelta2;
                 const float dE = std::sqrt(kab * (kch * chrodelta2 + kH * huedelta2) + kL * SQR(refL - maskptr->L[y][x]));
-                float reducdE = calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensbn);
+                float reducdE = (lp.scopeopen ? 1.f : calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, lp.sensbn));
                 if(lp.fullim == 3 ) {//disabled scope
                     reducdE = 1.f;
                 }
@@ -10187,7 +10189,7 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
 
                 const float dE = rsob + std::sqrt(kab * (kch * chrodelta2 + kH * huedelta2) + kL * SQR(refL - maskptr->L[y][x]));
                 //reduction action with deltaE
-                float reducdE = calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, varsens);
+                float reducdE = (lp.scopeopen ? 1.f : calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, varsens));
                 if(lp.fullim == 3 || lp.shapmet == 2) {//disable scope for Global mode and gradient shape
                     reducdE = 1.f;
                 }
@@ -17485,7 +17487,7 @@ void ImProcFunctions::Lab_Local(
             for (int y = 0; y < transformed->H ; y++)
                 for (int x = 0; x < transformed->W; x++) {
                     float dE = std::sqrt(SQR(refa - bufreti->a[y][x] / 327.68f) + SQR(refb - bufreti->b[y][x] / 327.68f) + SQR(static_cast<float>(lumaref) - bufreti->b[y][x] / 327.68f));
-                    float reducdE = calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, sensibefore);
+                    float reducdE = (lp.scopeopen ? 1.f : calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, sensibefore));
                     if(lp.fullim == 3 ) {//disable scope
                         reducdE = 1.f;
                     }
@@ -17849,7 +17851,7 @@ void ImProcFunctions::Lab_Local(
             for (int y = ystart; y < yend ; y++) {
                 for (int x = xstart; x < xend; x++) {
                     const float dE = std::sqrt(SQR(refa - bufreti->a[y - ystart][x - xstart] / 327.68f) + SQR(refb - bufreti->b[y - ystart][x - xstart] / 327.68f) + SQR(static_cast<float>(lumaref) - bufreti->b[y - ystart][x - xstart] / 327.68f));
-                    float reducdE = calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, sensibefore);
+                    float reducdE = (lp.scopeopen ? 1.f : calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, sensibefore));
                     if(lp.fullim == 3 ) {//disable scope
                         reducdE = 1.f;
                     }
