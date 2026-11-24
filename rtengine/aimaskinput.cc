@@ -424,9 +424,19 @@ private:
             // later, unless the editor has moved on to another photo.
             constexpr int kRetries = 2;
             for (int attempt = 0;; ++attempt) {
-                cache.computeMasks(job->imageId, job->input->r.ptrs, job->input->g.ptrs, job->input->b.ptrs,
-                                   job->input->getWidth(), job->input->getHeight(), job->fullW, job->fullH,
-                                   job->workingProfile, job->multiThread, job->key);
+                // An exception escaping this detached thread aborts the whole
+                // app (seen 2026-11-23: bad_alloc from an array2D in
+                // computeMasks). Treat it as a failed attempt instead, so the
+                // free-models-and-retry path below handles it.
+                try {
+                    cache.computeMasks(job->imageId, job->input->r.ptrs, job->input->g.ptrs, job->input->b.ptrs,
+                                       job->input->getWidth(), job->input->getHeight(), job->fullW, job->fullH,
+                                       job->workingProfile, job->multiThread, job->key);
+                } catch (const std::exception& e) {
+                    std::fprintf(stderr, "AI Masking: analysis threw: %s\n", e.what());
+                } catch (...) {
+                    std::fprintf(stderr, "AI Masking: analysis threw an unknown exception\n");
+                }
                 if (cache.hasCachedMasks(job->imageId, job->key) || !cache.isPending(job->imageId, job->key)
                         || attempt == kRetries) {
                     break;
@@ -443,8 +453,14 @@ private:
                 std::this_thread::sleep_for(std::chrono::seconds(2 * (attempt + 1)));
             }
             if (job->needDepth && cache.hasCachedMasks(job->imageId, job->key)) {
-                computeDepthClasses(job->imageId, job->key, *job->input, job->fullW, job->fullH,
-                                    job->workingProfile);
+                try {
+                    computeDepthClasses(job->imageId, job->key, *job->input, job->fullW, job->fullH,
+                                        job->workingProfile);
+                } catch (const std::exception& e) {
+                    std::fprintf(stderr, "AI Masking: depth estimation threw: %s\n", e.what());
+                } catch (...) {
+                    std::fprintf(stderr, "AI Masking: depth estimation threw an unknown exception\n");
+                }
             }
             job->input.reset();
             const bool ready = cache.hasCachedMasks(job->imageId, job->key);
