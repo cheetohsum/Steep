@@ -47,6 +47,7 @@
 #include "partnerdepthstore.h"
 #include "samselector.h"
 #include "airemover.h"
+#include "aimodels.h"
 #endif
 
 namespace rtengine
@@ -155,16 +156,16 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
             return Glib::ustring();
         };
 
+        // Which model does which job is the user's choice where several are
+        // installed (Preferences > AI models, aimodels.h).
+        aimodels::setRoots(Glib::build_filename(baseDir, "models"), Glib::build_filename(userSettingsDir, "models"));
+        // STEEP_AIMASK_LEGACY_MODELS=1 forces the original small pair, for
+        // A/B comparisons (tools/aimask_eval.py).
+        const bool legacyModels = std::getenv("STEEP_AIMASK_LEGACY_MODELS") != nullptr;
+
         {
-            // HRNetV2 when installed (43.2 mIoU on ADE20K against MobileNetV2's
-            // 34.8, and a quarter- rather than eighth-resolution output).
-            // STEEP_AIMASK_LEGACY_MODELS=1 keeps the original pair, for A/B
-            // comparisons (tools/aimask_eval.py).
-            const bool legacyModels = std::getenv("STEEP_AIMASK_LEGACY_MODELS") != nullptr;
-            Glib::ustring modelPath = legacyModels ? Glib::ustring() : findModel("ade20k_hrnetv2_c1.onnx");
-            if (modelPath.empty()) {
-                modelPath = findModel("ade20k_mobilenetv2_c1.onnx");
-            }
+            const Glib::ustring modelPath = aimodels::resolve(
+                aimodels::Role::Scene, legacyModels ? Glib::ustring("mobilenetv2") : s->aiModelScene).location;
 
             if (modelPath.empty()) {
                 fprintf(stderr, "AI Masking: no segmentation model under %s or %s\n",
@@ -186,28 +187,16 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
                 PartnerDepthStore::getInstance().setModelDirectory(Glib::path_get_dirname(depthPath));
             }
 
-            // Click-to-select on a double exposure partner; loaded on first use.
-            const Glib::ustring samPath = findModel("sam2_encoder.onnx");
-
-            if (!samPath.empty()) {
-                SamSelector::getInstance().setModelDirectory(Glib::path_get_dirname(samPath));
-            }
-
-            // Optional high-quality Remove Object fill; loaded on first use.
-            const Glib::ustring removerPath = findModel("rorem_unet.onnx");
-
-            if (!removerPath.empty()) {
-                AIRemoverEngine::getInstance().setModelDirectory(Glib::path_get_dirname(removerPath));
-            }
+            // Click selection and the optional wide Remove Object fill:
+            // both load on first use, and both follow the settings live.
+            aimodels::applyLive(*s);
         }
 
         {
             // BiRefNet when it is installed: trained at 1024 px against
             // U^2-Net's 320, it is what keeps hair and fur in a subject mask.
-            Glib::ustring subjectPath = std::getenv("STEEP_AIMASK_LEGACY_MODELS") ? Glib::ustring() : findModel("birefnet_subject.onnx");
-            if (subjectPath.empty()) {
-                subjectPath = findModel("u2net_subject.onnx");
-            }
+            const Glib::ustring subjectPath = aimodels::resolve(
+                aimodels::Role::Subject, legacyModels ? Glib::ustring("u2net") : s->aiModelSubject).location;
 
             // Deferred: the session for a 170 MB model takes seconds to build,
             // and nothing needs it until a subject mask is asked for. Until it
@@ -222,7 +211,10 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
         }
 
         {
-            const Glib::ustring lamaPath = findModel("lama_inpainting.onnx");
+            // STEEP_LAMA_MODEL names another file to load, for testing an
+            // export without replacing the installed one.
+            const char* const lamaOverride = std::getenv("STEEP_LAMA_MODEL");
+            const Glib::ustring lamaPath = lamaOverride ? Glib::ustring(lamaOverride) : findModel("lama_inpainting.onnx");
 
             // Deferred: building this session measures ~4.5 s, and paying it
             // inside init() stalled every startup by that much whether or not

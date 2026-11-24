@@ -93,11 +93,11 @@ struct AIRemoverEngine::Impl {
     void releaseIfIdle(bool force)
     {
         std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
-        if (!lock.owns_lock() || !unet || (!force && AIIdleReaper::nowMs() - lastUse.load() < AIIdleReaper::kIdleMs)) {
+        if (!lock.owns_lock() || !unet || (!force && AIIdleReaper::nowMs() - lastUse.load() < AIIdleReaper::idleMs())) {
             return;
         }
         unet.reset();
-        std::fprintf(stderr, "AI Remover: model unloaded after %lld s idle\n", AIIdleReaper::kIdleMs / 1000);
+        std::fprintf(stderr, "AI Remover: model unloaded after %lld s idle\n", AIIdleReaper::idleMs() / 1000);
     }
 
     std::unique_ptr<Ort::Session> session(const char* file, bool onCpu = false)
@@ -221,12 +221,29 @@ AIRemoverEngine& AIRemoverEngine::getInstance()
 void AIRemoverEngine::setModelDirectory(const Glib::ustring& directory)
 {
     std::lock_guard<std::mutex> lock(impl->mutex);
+#ifdef RT_AI_MASKING
+    if (impl->directory != directory) {
+        impl->unet.reset();
+        impl->encoder.reset();
+        impl->decoder.reset();
+    }
+#endif
     impl->directory = directory;
     impl->haveModels = !directory.empty();
     for (const char* file : {kUnet, kUnetData, kEncoder, kDecoder}) {
         impl->haveModels = impl->haveModels
             && Glib::file_test(Glib::build_filename(directory, file), Glib::FILE_TEST_EXISTS);
     }
+}
+
+unsigned long long AIRemoverEngine::memoryNeeded(bool denoiserLoaded)
+{
+    // Measured: the denoiser commits 6.5 GB while loaded, and one pass of
+    // the image codec 4 GB on the CPU (its fallback when the GPU is full).
+    // The two are never held together when memory is short -- the denoiser
+    // is released before the decode -- so the peak is the denoiser plus the
+    // working buffers of a run, not the sum.
+    return (denoiserLoaded ? 5ULL : 9ULL) << 30;
 }
 
 bool AIRemoverEngine::available() const
@@ -269,13 +286,14 @@ bool AIRemoverEngine::fill(const float* r, const float* g, const float* b, const
         }
         memoryTrace("start");
         // Running out of memory part-way does not fail cleanly inside the
-        // GPU runtime, so do not start what the system cannot finish: the
-        // denoiser commits about 7 GB and the codec about 4 GB on top.
-        const unsigned long long needed = (impl->unet ? 5ULL : 12ULL) << 30;
+        // GPU runtime, so do not start what the system cannot finish.
+        const unsigned long long needed = memoryNeeded(bool(impl->unet));
         const unsigned long long canCommit = MemGuard::commitHeadroomBytes();
         if (canCommit < needed) {
             std::fprintf(stderr, "AI Remover: skipped, the system can only commit %.1f GB more (needs %.0f GB)\n",
                          canCommit / double(1ULL << 30), needed / double(1ULL << 30));
+            SmartRepairReports::setFill(SmartRepairReport::Fill::WideSkippedMemory,
+                                        float(needed / double(1ULL << 30)), float(canCommit / double(1ULL << 30)));
             return false;
         }
         if (job) job->checkpoint();
@@ -426,7 +444,7 @@ bool AIRemoverEngine::fill(const float* r, const float* g, const float* b, const
         memoryTrace("denoised");
         // Kept for a next fill only when the system has room to spare; the
         // decode and the rest of the repair still need several gigabytes.
-        if (MemGuard::commitHeadroomBytes() < 16ULL << 30) {
+        if (MemGuard::commitHeadroomBytes() < 12ULL << 30) {
             impl->unet.reset();
             std::fprintf(stderr, "AI Remover: model released at once, memory is short\n");
         }
@@ -461,6 +479,7 @@ bool AIRemoverEngine::fill(const float* r, const float* g, const float* b, const
             edittrace::logf("[aiRemover] %dx%d -> model %dx%d, %d steps, %s, %.1fs", w, h, mw, mh, int(timesteps.size()),
                             impl->directml ? "DirectML" : "CPU", (AIIdleReaper::nowMs() - startMs) / 1000.0);
         }
+        SmartRepairReports::setFill(SmartRepairReport::Fill::Wide);
         return true;
     } catch (const SmartRepairCancelled&) {
         throw;
@@ -477,10 +496,15 @@ bool AIRemoverEngine::fill(const float* r, const float* g, const float* b, const
                 std::this_thread::sleep_for(std::chrono::milliseconds(750));
                 continue;
             }
+            SmartRepairReports::setFill(SmartRepairReport::Fill::WideSkippedMemory, 0.f,
+                                        float(MemGuard::commitHeadroomBytes() / double(1ULL << 30)));
+            return false;
         }
+        SmartRepairReports::setFill(SmartRepairReport::Fill::WideFailed);
         return false;
     } catch (const std::runtime_error& e) {
         std::fprintf(stderr, "AI Remover: %s\n", e.what());
+        SmartRepairReports::setFill(SmartRepairReport::Fill::WideFailed);
         return false;
     }
 #endif

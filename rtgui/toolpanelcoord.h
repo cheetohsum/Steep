@@ -337,6 +337,35 @@ private:
     rtengine::procparams::SHParams savedSH_;
     rtengine::procparams::BlackWhiteParams savedBlackWhite_;
     rtengine::procparams::LCurveParams savedLabCurve_;
+    // The colour tools on the Mask pane. White balance and Colour Grading are
+    // bridged into the selected spot (warm + colour-correction grid); the
+    // mixer, Point Color and RGB curves have no per-spot form and are greyed
+    // out there. All of them are put back after every write, like the above,
+    // so nothing done on the Mask pane recolours the whole photo.
+    rtengine::procparams::WBParams savedWB_;
+    rtengine::procparams::ColorGradingParams savedColorGrading_;
+    rtengine::procparams::HSVEqualizerParams savedHSV_;
+    rtengine::procparams::PointColorParams savedPointColor_;
+    rtengine::procparams::RGBCurvesParams savedRGBCurves_;
+    // Detail and effects tools put back the same way; Texture, Clarity,
+    // Grain and Dehaze are bridged in bridgeDetailToSpot.
+    rtengine::procparams::TextureParams savedTexture_;
+    rtengine::procparams::ClarityParams savedClarity_;
+    rtengine::procparams::GrainParams savedGrain_;
+    rtengine::procparams::DehazeParams savedDehaze_;
+    rtengine::procparams::DirPyrDenoiseParams savedDenoise_;
+    bool bridgeDetailToSpot(rtengine::procparams::ProcParams* params, int id,
+                            rtengine::procparams::LocallabParams::LocallabSpot& spot) const;
+    bool isDetailBridgeEvent(int id) const;
+    bool isBWBridgeEvent(int id) const;
+    void saveColourMaskGlobals(const rtengine::procparams::ProcParams& params);
+    void restoreColourMaskGlobals(rtengine::procparams::ProcParams& params) const;
+    bool bridgeColourToSpot(rtengine::procparams::ProcParams* params, int id,
+                            rtengine::procparams::LocallabParams::LocallabSpot& spot) const;
+    void setGlobalOnlyToolsSensitive(bool sensitive);
+    // A group reset X pressed on the Mask pane: the bridge resets these
+    // panels' fields on the selected spot (see resetGroupToNeutral).
+    std::vector<ToolPanel*> pendingMaskGroupReset_;
 
     bool bridgeGlobalToSpot(rtengine::procparams::ProcParams* params, const rtengine::ProcEvent& event);
     void loadSpotIntoGlobalTools();

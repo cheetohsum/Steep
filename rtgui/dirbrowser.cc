@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <sstream>
 
 #include "rtengine/rt_math.h"
 
@@ -399,6 +400,13 @@ public:
     int scale = 1;
     int tile = 24;                      // logical px, square
     Gdk::RGBA placeholderInk;
+    // Milliseconds since this row's strip arrived while it is still fading
+    // in (DirBrowser::stripFadeStart_), or -1 to draw it settled.
+    double fadeElapsedMs = -1;
+    static constexpr double kFadeMs = 240;        // motion::Duration::Large
+    static constexpr double kFadeStaggerMs = 45;  // per tile, left to right
+    static constexpr double kFadeRise = 3;        // logical px the tile settles
+    static double fadeTotalMs(int tiles) { return kFadeMs + std::max(0, tiles - 1) * kFadeStaggerMs; }
 
     int visibleRight = 0;               // right edge of the visible tree, tree px
     // Height of the name band (the shared sidebar row height). Never set a
@@ -544,7 +552,33 @@ protected:
                       std::max(0, visibleRight - background_area.get_x()), background_area.get_height());
         cr->clip();
 
-        if (strip) {
+        if (strip && fadeElapsedMs >= 0) {
+            // Arriving: each tile fades in over its grey placeholder and
+            // settles up a few px, a beat after the one to its left.
+            const int stripTiles = std::max(1, (strip->get_width() / scale + kGap) / (tile + kGap));
+            for (int i = 0; i < std::max(slots, stripTiles); ++i) {
+                const double x = x0 + i * (tile + kGap);
+                const double t = (fadeElapsedMs - i * kFadeStaggerMs) / kFadeMs;
+                const double shown = steep::motion::ease(steep::motion::Ease::Enter, t);
+                if (shown < 1.0) {
+                    cr->set_source_rgba(placeholderInk.get_red(), placeholderInk.get_green(),
+                                        placeholderInk.get_blue(), 0.08 * (1.0 - shown));
+                    roundedRect(cr, x, y0, tile, tile, 3.0);
+                    cr->fill();
+                }
+                if (shown <= 0.0 || i >= stripTiles) {
+                    continue;
+                }
+                cr->save();
+                cr->rectangle(x, y0 - kFadeRise, tile, tile + kFadeRise);
+                cr->clip();
+                cr->translate(x0, y0 + kFadeRise * (1.0 - shown));
+                cr->scale(1.0 / scale, 1.0 / scale);
+                Gdk::Cairo::set_source_pixbuf(cr, strip, 0, 0);
+                cr->paint_with_alpha(shown);
+                cr->restore();
+            }
+        } else if (strip) {
             cr->translate(x0, y0);
             cr->scale(1.0 / scale, 1.0 / scale);
             Gdk::Cairo::set_source_pixbuf(cr, strip, 0, 0);
@@ -927,6 +961,13 @@ void DirBrowser::fillDirTree ()
         const bool previews = iter && App::get().options().folderPreviews;
         textCR->slots = previews ? iter->get_value(dtColumns.previewSlots) : 0;
         textCR->strip = previews ? iter->get_value(dtColumns.previewStrip) : Glib::RefPtr<Gdk::Pixbuf>();
+        textCR->fadeElapsedMs = -1;
+        if (textCR->strip && !stripFadeStart_.empty()) {
+            const auto fade = stripFadeStart_.find(iter->get_value(dtColumns.dirname));
+            if (fade != stripFadeStart_.end()) {
+                textCR->fadeElapsedMs = (g_get_monotonic_time() - fade->second) / 1000.0;
+            }
+        }
         textCR->scale = std::max(1, dirtree->get_scale_factor());
         textCR->tile = FolderNameRenderer::tileFor(App::get().options().folderPreviewSize);
         const auto hadj = scrolledwindow4->get_hadjustment();
@@ -2212,6 +2253,11 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent, 
                     try {
                         auto iter = self->rowFor(pathStr, dirname);
                         if (iter) {
+                            // Only a row that had no picture yet fades in; a
+                            // rebuilt strip replacing a shown one just swaps.
+                            if (!iter->get_value(self->dtColumns.previewStrip)) {
+                                self->startStripFade(dirname);
+                            }
                             (*iter)[self->dtColumns.previewStrip] = strip;
                         }
                     } catch (...) {}
@@ -2219,6 +2265,32 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent, 
             }
         });
         }
+    });
+}
+
+void DirBrowser::startStripFade (const Glib::ustring& dirname)
+{
+    if (steep::motion::reduceMotion() || !dirtree || !dirtree->get_mapped()) {
+        return;
+    }
+    stripFadeStart_[dirname] = g_get_monotonic_time();
+    if (stripFadeTick_) {
+        return;
+    }
+    stripFadeTick_ = dirtree->add_tick_callback([this](const Glib::RefPtr<Gdk::FrameClock>&) -> bool {
+        const gint64 now = g_get_monotonic_time();
+        // Generous tile count: the strip can hold more photos than the
+        // setting when the sidebar is wide, and pruning early would snap.
+        const double doneMs = FolderNameRenderer::fadeTotalMs(16);
+        for (auto it = stripFadeStart_.begin(); it != stripFadeStart_.end();) {
+            it = (now - it->second) / 1000.0 > doneMs ? stripFadeStart_.erase(it) : std::next(it);
+        }
+        dirtree->queue_draw();
+        if (stripFadeStart_.empty()) {
+            stripFadeTick_ = 0;
+            return false;
+        }
+        return true;
     });
 }
 
@@ -2528,10 +2600,14 @@ void DirBrowser::showPreviewMenu (GdkEventButton* event)
 struct DirBrowser::StatsJob {
     Glib::ustring dirname;
     Glib::ustring pathStr;
-    std::vector<std::string> files;
+    std::vector<std::string> files;     // full paths
     size_t next = 0;
     bool listed = false;
     FolderStats stats;
+    bool force = false;                 // a flag changed in the app: always recount
+    std::uint64_t knownSignature = 0;   // from the persisted stats, 0 = none
+    Glib::ustring knownEncoded;
+    std::uint64_t signature = 0;        // this listing's, 0 = could not sign
 };
 
 namespace
@@ -2618,8 +2694,73 @@ void DirBrowser::onTreeWidthChanged ()
     }, 350);
 }
 
+void DirBrowser::loadPersistedStats ()
+{
+    if (persistedStatsLoaded_) {
+        return;
+    }
+    persistedStatsLoaded_ = true;
+
+    const std::string path = Glib::build_filename(App::get().options().cacheBaseDir, "folderstats.tsv");
+    gchar* raw = nullptr;
+    gsize length = 0;
+    if (!g_file_get_contents(path.c_str(), &raw, &length, nullptr)) {
+        return;
+    }
+    // One folder per line: signature (hex) TAB encoded stats TAB folder.
+    std::istringstream in(std::string(raw, length));
+    g_free(raw);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        const auto t1 = line.find('\t');
+        const auto t2 = t1 == std::string::npos ? std::string::npos : line.find('\t', t1 + 1);
+        if (t2 == std::string::npos || t2 + 1 >= line.size()) {
+            continue;
+        }
+        PersistedStats p;
+        try {
+            p.signature = std::stoull(line.substr(0, t1), nullptr, 16);
+        } catch (...) {
+            continue;
+        }
+        p.encoded = line.substr(t1 + 1, t2 - t1 - 1);
+        if (p.signature && g_utf8_validate(p.encoded.c_str(), -1, nullptr)) {
+            persistedStats_[line.substr(t2 + 1)] = std::move(p);
+        }
+    }
+}
+
+void DirBrowser::schedulePersistStats ()
+{
+    persistStatsConn_.disconnect();
+    persistStatsConn_ = Glib::signal_timeout().connect([this]() -> bool {
+        std::string out;
+        for (const auto& p : persistedStats_) {
+            char sig[24];
+            std::snprintf(sig, sizeof(sig), "%llx", static_cast<unsigned long long>(p.second.signature));
+            out += sig;
+            out += '\t';
+            out += p.second.encoded.raw();
+            out += '\t';
+            out += p.first;
+            out += '\n';
+        }
+        const std::string path = Glib::build_filename(App::get().options().cacheBaseDir, "folderstats.tsv");
+        steep::runBackground([path, out]() {
+            g_mkdir_with_parents(Glib::path_get_dirname(path).c_str(), 0755);
+            g_file_set_contents(path.c_str(), out.data(), static_cast<gssize>(out.size()), nullptr);
+        });
+        return false;
+    }, 2000);
+}
+
 void DirBrowser::scanFolderStats (std::vector<ScanEntry> entries, bool force)
 {
+    loadPersistedStats();
+
     for (auto& entry : entries) {
         const std::string key = entry.dirname.raw();
 
@@ -2634,6 +2775,16 @@ void DirBrowser::scanFolderStats (std::vector<ScanEntry> entries, bool force)
             }
         }
 
+        // Last launch's numbers go up straight away; the scan below confirms
+        // them (one folder listing when nothing changed) or replaces them.
+        const auto persisted = persistedStats_.find(key);
+        if (!force && persisted != persistedStats_.end()) {
+            auto iter = rowFor(entry.pathStr, entry.dirname);
+            if (iter && iter->get_value(dtColumns.flagStats).empty()) {
+                (*iter)[dtColumns.flagStats] = persisted->second.encoded;
+            }
+        }
+
         if (statsInFlight_.count(key)) {
             if (force) {
                 statsRedo_.insert(key);
@@ -2645,38 +2796,54 @@ void DirBrowser::scanFolderStats (std::vector<ScanEntry> entries, bool force)
         auto job = std::make_shared<StatsJob>();
         job->dirname = entry.dirname;
         job->pathStr = entry.pathStr;
+        job->force = force;
+        if (persisted != persistedStats_.end()) {
+            job->knownSignature = persisted->second.signature;
+            job->knownEncoded = persisted->second.encoded;
+        }
         statsQueue().enqueue([this, job]() { runStatsChunk(job); });
     }
 }
 
-// Worker side: one chunk, then back to the end of the queue.
+// Worker side: one chunk, then back to the end of the queue. Whatever
+// happens, a job ends in the idle below: SerialQueue swallows exceptions, and
+// a job that never finished left its folder "in flight" for the rest of the
+// session, so it was never counted again and showed no chips.
 void DirBrowser::runStatsChunk (std::shared_ptr<StatsJob> job)
 {
-    if (!job->listed) {
-        job->listed = true;
-        try {
-            Glib::Dir dir(job->dirname);
-            const auto& exts = App::get().options().parsedExtensionsSet;
-            for (auto it = dir.begin(); it != dir.end(); ++it) {
-                const Glib::ustring fname = *it;
-                const auto dotpos = fname.find_last_of('.');
-                if (dotpos == Glib::ustring::npos) {
-                    continue;
-                }
-                const Glib::ustring ext = fname.substr(dotpos + 1).lowercase();
-                if (exts.count(ext.raw())) {
-                    job->files.push_back(fname.raw());
+    bool done = false;
+    try {
+        if (!job->listed) {
+            job->listed = true;
+            std::vector<Glib::ustring> files, subdirs;
+            std::uint64_t signature = 0;
+            if (imagescan::listImageFilesStamped(job->dirname, files, subdirs, signature)) {
+                job->signature = signature;
+                for (const auto& f : files) {
+                    job->files.push_back(f.raw());
                 }
             }
-        } catch (...) {}
+            // Nothing changed since the persisted count (and no flag was
+            // set in the app, which may only touch the data cache): reuse it.
+            if (!job->force && job->signature != 0 && job->signature == job->knownSignature) {
+                job->stats = FolderStats::decode(job->knownEncoded);
+                job->next = job->files.size();
+            }
+        }
+
+        const size_t end = std::min(job->files.size(), job->next + kStatsChunk);
+        for (; job->next < end; ++job->next) {
+            try {
+                accumulateFileFlags(job->files[job->next], job->stats);
+            } catch (...) {}
+        }
+        done = job->next >= job->files.size();
+    } catch (...) {
+        done = true;
+        job->signature = 0;     // incomplete: show it, never persist it
     }
 
-    const size_t end = std::min(job->files.size(), job->next + kStatsChunk);
-    for (; job->next < end; ++job->next) {
-        accumulateFileFlags(Glib::build_filename(job->dirname.raw(), job->files[job->next]), job->stats);
-    }
-
-    if (job->next < job->files.size()) {
+    if (!done) {
         statsQueue().enqueue([this, job]() { runStatsChunk(job); });
         return;
     }
@@ -2687,6 +2854,14 @@ void DirBrowser::runStatsChunk (std::shared_ptr<StatsJob> job)
         const Glib::ustring encoded = job->stats.encode();
         self->statsCache_[key] = encoded;
         self->statsInFlight_.erase(key);
+        if (job->signature != 0) {
+            auto& p = self->persistedStats_[key];
+            if (p.signature != job->signature || p.encoded != encoded) {
+                p.signature = job->signature;
+                p.encoded = encoded;
+                self->schedulePersistStats();
+            }
+        }
 
         auto iter = self->rowFor(job->pathStr, job->dirname);
         if (iter && iter->get_value(self->dtColumns.flagStats) != encoded) {

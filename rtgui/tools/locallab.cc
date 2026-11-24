@@ -621,7 +621,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             newSpot->aiMaskClass = aiClass;
             newSpot->aiMaskPaint = rtengine::MaskPaint::decode(expsettings->getPendingAIPaint());
             newSpot->aiMaskThreshold = 0.3;
-            newSpot->aiMaskFeather = 35.0;
+            newSpot->aiMaskFeather = rtengine::procparams::LocallabParams::LocallabSpot().aiMaskFeather;
             newSpot->transit = newSpot->aiMaskFeather;
             newSpot->aiMaskOpacity = 1.0;
 

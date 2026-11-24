@@ -124,6 +124,8 @@ public:
     void adjusterChanged (Adjuster* a, double newval) override;
     void neutral_pressed ();
     void autolevels_clicked ();
+    // On the Mask pane: greys out the controls that only exist for the whole photo.
+    void setMaskMode(bool maskMode, const Glib::ustring& why);
     void clip_changed ();
     bool clip_changed_ ();
     void waitForAutoExp ();

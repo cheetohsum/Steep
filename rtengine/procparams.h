@@ -1266,6 +1266,10 @@ struct SpotEntry {
     std::vector<ObjectPoint> objectPoints;
     float objectGrow = 1.5f;     // outward growth, percent of the object's size
     bool objectShadow = false;   // also take the dark area attached to the object's base
+    // A click is ambiguous between a part, the object and the group it
+    // belongs to. 0 lets the engine decide; 1..3 take the selector's
+    // smallest, middle or largest reading.
+    int objectSize = 0;
     // Smart repairs: let the diffusion remover (when installed) build the
     // structure of a wide fill. Narrow fills never use it.
     bool highQuality = true;

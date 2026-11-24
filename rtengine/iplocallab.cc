@@ -52,6 +52,8 @@
 #ifdef RT_AI_MASKING
 #include "aimaskcache.h"
 #include "masksampling.h"
+#include "perceptualbw.h"
+#include "graincharacter.h"
 #endif
 
 //#define BENCHMARK
@@ -896,6 +898,7 @@ struct local_params {
     float residslop;
     bool avoidneg;
     bool blwh;
+    bool blwhmix = false; // the spot converts with its own hue mixer (see Lab_Local)
     bool fftma;
     float blurma;
     float contma;
@@ -9748,6 +9751,37 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
         execgradsh = true;
     }
 
+    // A mask's own black & white: the conversion the photo-wide tool runs
+    // (hue mixer, look, lens filter, tone shaping, print tone, amount), on
+    // what the colour block made of each pixel. Left out when every setting
+    // is neutral, where it equals the plain desaturation below.
+    std::unique_ptr<PerceptualBW> spotBW;
+    float spotBWAmount = 1.f;
+    const TMatrix bwWp = ICCStore::getInstance()->workingSpaceMatrix(params->icm.workingProfile);
+    const TMatrix bwWip = ICCStore::getInstance()->workingSpaceInverseMatrix(params->icm.workingProfile);
+    if (lp.blwh && lp.blwhmix && senstype == 0) {
+        const auto& bwSpot = params->locallab.spots.at(sp);
+        const LocallabParams::LocallabSpot bwDef;
+        if (bwSpot.bwMixer.size() >= 8 && bwSpot.bwTone.size() >= 6
+                && (bwSpot.bwMixer != bwDef.bwMixer || bwSpot.bwTone != bwDef.bwTone
+                    || bwSpot.bwFilter != bwDef.bwFilter || bwSpot.bwSetting != bwDef.bwSetting)) {
+            PerceptualBW::Settings bwSettings;
+            for (int band = 0; band < 8; ++band) {
+                bwSettings.mixer[band] = bwSpot.bwMixer[band];
+            }
+            bwSettings.setting = bwSpot.bwSetting;
+            bwSettings.filter = bwSpot.bwFilter;
+            bwSettings.midtones = bwSpot.bwTone[0];
+            bwSettings.contrast = bwSpot.bwTone[1];
+            bwSettings.highlights = bwSpot.bwTone[2];
+            bwSettings.shadows = bwSpot.bwTone[3];
+            bwSettings.printTone = bwSpot.bwTone[4];
+            spotBWAmount = LIM01(bwSpot.bwTone[5] / 100.f);
+            spotBW.reset(new PerceptualBW());
+            spotBW->build(bwSettings, bwWp[1][0], bwWp[1][1], bwWp[1][2]);
+        }
+    }
+
     const std::unique_ptr<LabImage> buftmp1(new LabImage(bfw, bfh));
 #ifdef _OPENMP
         #pragma omp parallel for schedule(dynamic,16) if(multiThread)
@@ -10097,6 +10131,13 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
 
 #ifdef RT_AI_MASKING
                 const bool aiMaskActive = aiMaskPtr && aiFullW > 0 && aiFullH > 0;
+                // An AI-masked spot with no maps (analysis failed or the
+                // models are missing) edits nothing: falling back to the
+                // geometric shape, whose bounds were widened to the frame,
+                // applied the edit to the whole photo. Add mode keeps its shape.
+                if (lp.useaimask && !aiMaskActive && lp.aimaskshapeop != 1) {
+                    continue;
+                }
                 float aiMaskValue = 0.f;
                 if (aiMaskActive) {
                     aiMaskValue = masksampling::atPixel(*aiMaskPtr, aiMaskW, aiMaskH,
@@ -10188,6 +10229,34 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                     // So cla = -original->a, giving partial desaturation in transition zones.
                     cla = -original->a[y + ystart][x + xstart];
                     clb = -original->b[y + ystart][x + xstart];
+
+                    if (spotBW) {
+                        const float oL = original->L[y + ystart][x + xstart];
+                        const float oa = original->a[y + ystart][x + xstart];
+                        const float ob = original->b[y + ystart][x + xstart];
+                        const float fL = oL + cli;
+                        const float fa = bufexpfin->a[y][x];
+                        const float fb = bufexpfin->b[y][x];
+                        float X, Y, Z, r, g, b;
+                        Color::Lab2XYZ(fL, fa, fb, X, Y, Z);
+                        Color::xyz2rgb(X, Y, Z, r, g, b, bwWip);
+                        r = rtengine::max(r, 0.f);
+                        g = rtengine::max(g, 0.f);
+                        b = rtengine::max(b, 0.f);
+                        const float r0 = r, g0 = g, b0 = b;
+                        spotBW->apply(r, g, b);
+                        // Amount blends with the colour in linear light, as
+                        // the photo-wide tool does.
+                        r = r0 + spotBWAmount * (r - r0);
+                        g = g0 + spotBWAmount * (g - g0);
+                        b = b0 + spotBWAmount * (b - b0);
+                        Color::rgbxyz(r, g, b, X, Y, Z, bwWp);
+                        float tL, ta, tb;
+                        Color::XYZ2Lab(X, Y, Z, tL, ta, tb);
+                        cli = tL - oL;
+                        cla = ta - oa;
+                        clb = tb - ob;
+                    }
                 }
 
 
@@ -15776,6 +15845,9 @@ void ImProcFunctions::Lab_Local(
     // blwh defaults to false, so any spot created while B&W was already on
     // does exactly that, and with an AI mask over vegetation the area that
     // comes back is precisely the foliage.
+    // The spot's own conversion only runs on colour: over a photo that is
+    // already black & white it would shape the tones a second time.
+    lp.blwhmix = lp.blwh && !params->blackwhite.enabled;
     lp.blwh = lp.blwh || params->blackwhite.enabled;
 
 
@@ -15898,12 +15970,12 @@ void ImProcFunctions::Lab_Local(
             // An empty mask has no visible edit; retain only the minimum work
             // area. In add mode the shape still edits, so its bounds stand.
             lp.lxL = lp.lx = lp.lyT = lp.ly = 4.f;
-        } else if (!aiBounds) {
-            // Preserve correctness while segmentation is still becoming available.
-            lp.lxL = std::max(lp.xc, 1.f);
-            lp.lx  = std::max(static_cast<float>(oW) - lp.xc, 1.f);
-            lp.lyT = std::max(lp.yc, 1.f);
-            lp.ly  = std::max(static_cast<float>(oH) - lp.yc, 1.f);
+        } else if (!aiBounds && lp.aimaskshapeop != 1) {
+            // No maps at all (analysis failed, models missing): the spot edits
+            // nothing until they exist, exactly like the pending placeholder.
+            // This used to widen the work area to the whole frame, and with no
+            // AI weight to confine it the edit landed on the entire photo.
+            lp.lxL = lp.lx = lp.lyT = lp.ly = 4.f;
         }
     }
 #endif
@@ -16557,7 +16629,21 @@ void ImProcFunctions::Lab_Local(
                         }
 
 
-                        filmGrain(tmpImage, isogr, strengr, scalegr, divgr, wi, he, call, fw, fh);
+                        const int colorgr = params->locallab.spots.at(sp).colorgr;
+
+                        if (colorgr >= 0) {
+                            // The Grain tool's own engine (dye clouds sized
+                            // against the whole frame, Film Lab's emulsion
+                            // when that is on), laid over this region where
+                            // it sits in the photo so zooming and panning
+                            // keep the same grain in the same place.
+                            const int grainX = (cx + (lp.blurmet == 1 ? 0 : xstart)) * sk;
+                            const int grainY = (cy + (lp.blurmet == 1 ? 0 : ystart)) * sk;
+                            filmGrainV2(tmpImage, isogr, strengr, scalegr, colorgr, grainX, grainY, sk,
+                                        oW * sk, oH * sk, filmGrainCharacter(params->filmPresets));
+                        } else {
+                            filmGrain(tmpImage, isogr, strengr, scalegr, divgr, wi, he, call, fw, fh);
+                        }
 
                         for (int y = 0; y < he ; y++) {
                             for (int x = 0; x < wi; x++) {
@@ -20213,7 +20299,7 @@ void ImProcFunctions::Lab_Local(
                     localContrastParams.radius = params->locallab.spots.at(sp).lcradius;
                     localContrastParams.amount = params->locallab.spots.at(sp).lcamount;
                     localContrastParams.darkness = params->locallab.spots.at(sp).lcdarkness;
-                    localContrastParams.lightness = params->locallab.spots.at(sp).lightness;
+                    localContrastParams.lightness = params->locallab.spots.at(sp).lclightness;
                     bool fftwlc = false;
 
                     if (!lp.ftwlc) { // || (lp.ftwlc && call != 2)) {
@@ -21751,6 +21837,23 @@ void ImProcFunctions::Lab_Local(
 
                     if (rgblocalcurve && localrgbutili && lp.qualcurvemet != 0) {
                         usergb = true;
+
+                        // The Exposure tool draws its curve against display
+                        // values; a spot's own curve reads linear ones. With
+                        // the flag set the spot's curve is wrapped in the
+                        // display encoding, so the same points bend the same
+                        // tones on a mask as on the photo.
+                        LUTf rgbCurveDisplay;
+
+                        if (params->locallab.spots.at(sp).rgbcurveGamma) {
+                            rgbCurveDisplay(65536);
+
+                            for (int i = 0; i < 65536; ++i) {
+                                rgbCurveDisplay[i] = Color::igammatab_srgb[rgblocalcurve[Color::gammatab_srgb[i]]];
+                            }
+                        }
+
+                        const LUTf& rgbCurve = rgbCurveDisplay ? rgbCurveDisplay : rgblocalcurve;
                         const std::unique_ptr<Imagefloat> tmpImage(new Imagefloat(bfw, bfh));
 
                         lab2rgb(*buftemp, *tmpImage, params->icm.workingProfile);
@@ -21763,22 +21866,22 @@ void ImProcFunctions::Lab_Local(
 
                                 //std
                                 if (tonemod == 0) {
-                                    curves::setLutVal(rgblocalcurve, tmpImage->r(y, x), tmpImage->g(y, x), tmpImage->b(y, x));
+                                    curves::setLutVal(rgbCurve, tmpImage->r(y, x), tmpImage->g(y, x), tmpImage->b(y, x));
                                 } else {
                                     float r = CLIP(tmpImage->r(y, x));
                                     float g = CLIP(tmpImage->g(y, x));
                                     float b = CLIP(tmpImage->b(y, x));
 
                                     if (tonemod == 1) { // weightstd
-                                        const float r1 = rgblocalcurve[r];
+                                        const float r1 = rgbCurve[r];
                                         const float g1 = triangle(r, r1, g);
                                         const float b1 = triangle(r, r1, b);
 
-                                        const float g2 = rgblocalcurve[g];
+                                        const float g2 = rgbCurve[g];
                                         const float r2 = triangle(g, g2, r);
                                         const float b2 = triangle(g, g2, b);
 
-                                        const float b3 = rgblocalcurve[b];
+                                        const float b3 = rgbCurve[b];
                                         const float r3 = triangle(b, b3, r);
                                         const float g3 = triangle(b, b3, g);
                                         r = CLIP(r1 * 0.50f + r2 * 0.25f + r3 * 0.25f);
@@ -21787,7 +21890,7 @@ void ImProcFunctions::Lab_Local(
                                     } else if (tonemod == 2) { // Luminance
                                         float currLuminance = r * 0.2126729f + g * 0.7151521f + b * 0.0721750f;
 
-                                        const float newLuminance = rgblocalcurve[currLuminance];
+                                        const float newLuminance = rgbCurve[currLuminance];
                                         currLuminance = currLuminance == 0.f ? 0.00001f : currLuminance;
                                         const float coef = newLuminance / currLuminance;
                                         r = LIM(r * coef, 0.f, 65535.f);
@@ -21796,23 +21899,23 @@ void ImProcFunctions::Lab_Local(
                                     } else if (tonemod == 3) { // Film like Adobe
                                         if (r >= g) {
                                             if (g > b) {
-                                                rgbtone(r, g, b, rgblocalcurve);     // Case 1: r >= g >  b
+                                                rgbtone(r, g, b, rgbCurve);     // Case 1: r >= g >  b
                                             } else if (b > r) {
-                                                rgbtone(b, r, g, rgblocalcurve);     // Case 2: b >  r >= g
+                                                rgbtone(b, r, g, rgbCurve);     // Case 2: b >  r >= g
                                             } else if (b > g) {
-                                                rgbtone(r, b, g, rgblocalcurve);     // Case 3: r >= b >  g
+                                                rgbtone(r, b, g, rgbCurve);     // Case 3: r >= b >  g
                                             } else {                           // Case 4: r == g == b
-                                                r = rgblocalcurve[r];
-                                                g = rgblocalcurve[g];
+                                                r = rgbCurve[r];
+                                                g = rgbCurve[g];
                                                 b = g;
                                             }
                                         } else {
                                             if (r >= b) {
-                                                rgbtone(g, r, b, rgblocalcurve);     // Case 5: g >  r >= b
+                                                rgbtone(g, r, b, rgbCurve);     // Case 5: g >  r >= b
                                             } else if (b >  g) {
-                                                rgbtone(b, g, r, rgblocalcurve);     // Case 6: b >  g >  r
+                                                rgbtone(b, g, r, rgbCurve);     // Case 6: b >  g >  r
                                             } else {
-                                                rgbtone(g, b, r, rgblocalcurve);     // Case 7: g >= b >  r
+                                                rgbtone(g, b, r, rgbCurve);     // Case 7: g >= b >  r
                                             }
                                         }
                                     }
@@ -24052,6 +24155,13 @@ void ImProcFunctions::Lab_Local(
 
                 float factorx = localFactor;
 #ifdef RT_AI_MASKING
+                // An AI-masked spot with no maps (analysis failed or the
+                // models are missing) edits nothing: falling back to the
+                // geometric shape, whose bounds were widened to the frame,
+                // applied the edit to the whole photo. Add mode keeps its shape.
+                if (lp.useaimask && !(aiMaskPtrOv && aiFullWOv > 0 && aiFullHOv > 0) && lp.aimaskshapeop != 1) {
+                    continue;
+                }
                 if (aiMaskPtrOv && aiFullWOv > 0 && aiFullHOv > 0) {
                     const float aiVal = masksampling::atPixel(*aiMaskPtrOv, aiMaskWOv, aiMaskHOv,
                         double(lox) * sk, double(loy) * sk, aiFullWOv, aiFullHOv, sk);
@@ -24216,6 +24326,13 @@ void ImProcFunctions::Lab_Local(
 
                 float factorx = localFactor;
 #ifdef RT_AI_MASKING
+                // An AI-masked spot with no maps (analysis failed or the
+                // models are missing) edits nothing: falling back to the
+                // geometric shape, whose bounds were widened to the frame,
+                // applied the edit to the whole photo. Add mode keeps its shape.
+                if (lp.useaimask && !(aiDbPtr && aiDbFullW > 0 && aiDbFullH > 0) && lp.aimaskshapeop != 1) {
+                    continue;
+                }
                 if (aiDbPtr && aiDbFullW > 0 && aiDbFullH > 0) {
                     const float aiVal = masksampling::atPixel(*aiDbPtr, aiDbW, aiDbH,
                         double(lox) * sk, double(loy) * sk, aiDbFullW, aiDbFullH, sk);

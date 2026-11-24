@@ -92,6 +92,12 @@ struct LocallabParams {
         bool activ;
         bool avoidneg;
         bool blwh;
+        // The mask's own black & white conversion (the perceptual hue mixer
+        // the photo-wide tool runs), used when blwh is on.
+        std::vector<int> bwMixer; // red, orange, yellow, green, cyan, blue, purple, magenta; 33 = neutral
+        std::vector<int> bwTone;  // midtones, contrast, highlights, shadows, print tone (-100..100), amount (0..100)
+        Glib::ustring bwFilter;
+        Glib::ustring bwSetting;
         bool recurs;
         bool laplac;
         bool deltae;
@@ -354,6 +360,8 @@ struct LocallabParams {
         double decayd;
         int isogr;
         int strengr;
+        int colorgr; // -1 = the older spot grain; 0..100 = the Grain tool's own engine with this dye colour
+        bool rgbcurveGamma; // the RGB tone curve is drawn against display (sRGB-encoded) values, like the Exposure tool's
         int scalegr;
         double divgr;
         int epsbl;

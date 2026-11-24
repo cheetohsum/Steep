@@ -17,12 +17,14 @@
 #include "aimaskinput.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -354,6 +356,10 @@ public:
                            waiters_.end());
         }
         addWaiterLocked(job->imageId, job->key, owner, onReady);
+        // Whatever was waiting to be retried is replaced by what the editor
+        // asks for now (the same photo again starts a fresh attempt).
+        retry_.reset();
+        retryWaiters_.clear();
         queued_ = std::move(job);
         if (!started_) {
             started_ = true;
@@ -369,6 +375,12 @@ public:
         waiters_.erase(std::remove_if(waiters_.begin(), waiters_.end(),
                                       [owner](const Waiter& w) { return w.owner == owner; }),
                        waiters_.end());
+        retryWaiters_.erase(std::remove_if(retryWaiters_.begin(), retryWaiters_.end(),
+                                           [owner](const Waiter& w) { return w.owner == owner; }),
+                            retryWaiters_.end());
+        if (retryWaiters_.empty()) {
+            retry_.reset();    // nobody left to show it to
+        }
     }
 
 private:
@@ -409,7 +421,24 @@ private:
             std::unique_ptr<Job> job;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
-                ready_.wait(lock, [this]() { return static_cast<bool>(queued_); });
+                while (!queued_) {
+                    if (!retry_) {
+                        ready_.wait(lock);
+                        continue;
+                    }
+                    // A photo whose analysis failed (usually memory) is tried
+                    // again on its own once the cool-down passes, unless a
+                    // newer request took the worker first.
+                    if (ready_.wait_until(lock, retryAt_) == std::cv_status::timeout && !queued_ && retry_) {
+                        queued_ = std::move(retry_);
+                        for (Waiter& w : retryWaiters_) {
+                            waiters_.push_back(std::move(w));
+                        }
+                        retryWaiters_.clear();
+                        failedId_.clear();
+                        retryingNow_ = true;
+                    }
+                }
                 job = std::move(queued_);
                 running_ = true;
                 runningId_ = job->imageId;
@@ -419,14 +448,37 @@ private:
 
             const long long startUs = edittrace::enabled() ? edittrace::nowUs() : 0;
             AIMaskCache& cache = AIMaskCache::getInstance();
+            bool retrying = false;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                retrying = retryingNow_;
+                retryingNow_ = false;
+            }
+            if (retrying) {
+                std::fprintf(stderr, "AI Masking: retrying the analysis that failed for %s\n", job->imageId.c_str());
+                if (cache.restoreOrBeginPending(job->imageId, job->input->getWidth(), job->input->getHeight(),
+                                                job->fullW, job->fullH, job->workingProfile, job->key, false)) {
+                    // Restored from the archive meanwhile: nothing to compute.
+                }
+            }
             // A failed analysis is usually memory -- another program holding
             // the GPU for a moment. Free the models and try again a little
             // later, unless the editor has moved on to another photo.
             constexpr int kRetries = 2;
             for (int attempt = 0;; ++attempt) {
-                cache.computeMasks(job->imageId, job->input->r.ptrs, job->input->g.ptrs, job->input->b.ptrs,
-                                   job->input->getWidth(), job->input->getHeight(), job->fullW, job->fullH,
-                                   job->workingProfile, job->multiThread, job->key);
+                // An exception escaping this detached thread aborts the whole
+                // app (seen 2026-11-23: bad_alloc from an array2D in
+                // computeMasks). Treat it as a failed attempt instead, so the
+                // free-models-and-retry path below handles it.
+                try {
+                    cache.computeMasks(job->imageId, job->input->r.ptrs, job->input->g.ptrs, job->input->b.ptrs,
+                                       job->input->getWidth(), job->input->getHeight(), job->fullW, job->fullH,
+                                       job->workingProfile, job->multiThread, job->key);
+                } catch (const std::exception& e) {
+                    std::fprintf(stderr, "AI Masking: analysis threw: %s\n", e.what());
+                } catch (...) {
+                    std::fprintf(stderr, "AI Masking: analysis threw an unknown exception\n");
+                }
                 if (cache.hasCachedMasks(job->imageId, job->key) || !cache.isPending(job->imageId, job->key)
                         || attempt == kRetries) {
                     break;
@@ -443,10 +495,15 @@ private:
                 std::this_thread::sleep_for(std::chrono::seconds(2 * (attempt + 1)));
             }
             if (job->needDepth && cache.hasCachedMasks(job->imageId, job->key)) {
-                computeDepthClasses(job->imageId, job->key, *job->input, job->fullW, job->fullH,
-                                    job->workingProfile);
+                try {
+                    computeDepthClasses(job->imageId, job->key, *job->input, job->fullW, job->fullH,
+                                        job->workingProfile);
+                } catch (const std::exception& e) {
+                    std::fprintf(stderr, "AI Masking: depth estimation threw: %s\n", e.what());
+                } catch (...) {
+                    std::fprintf(stderr, "AI Masking: depth estimation threw an unknown exception\n");
+                }
             }
-            job->input.reset();
             const bool ready = cache.hasCachedMasks(job->imageId, job->key);
             // Not ready and still the photo the cache waits for: the models
             // produced nothing. Superseded (another photo took the cache) is
@@ -454,6 +511,27 @@ private:
             const bool failedNow = !ready && cache.isPending(job->imageId, job->key);
             if (failedNow) {
                 cache.clearPending(job->imageId, job->key);
+            }
+            // Up to three slow retries per photo (15 s, 30 s, 45 s): enough
+            // for a game or another app to let go of the memory, without
+            // hammering a machine that really cannot fit the models.
+            constexpr int kSlowRetries = 3;
+            bool scheduleRetry = false;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                const std::string retryKey = job->imageId + "#" + std::to_string(job->key);
+                if (ready) {
+                    slowRetryCount_.erase(retryKey);
+                } else if (failedNow && !queued_ && slowRetryCount_[retryKey] < kSlowRetries) {
+                    const int n = ++slowRetryCount_[retryKey];
+                    retryAt_ = std::chrono::steady_clock::now() + std::chrono::seconds(15 * n);
+                    scheduleRetry = true;
+                    std::fprintf(stderr, "AI Masking: analysis failed for %s; trying again in %d s (%d of %d)\n",
+                                 job->imageId.c_str(), 15 * n, n, kSlowRetries);
+                }
+            }
+            if (!scheduleRetry) {
+                job->input.reset();
             }
             if (edittrace::enabled()) {
                 edittrace::logf("[aiMask] worker %s img=%s %.0fms",
@@ -472,8 +550,12 @@ private:
                 } else if (ready && failedId_ == job->imageId) {
                     failedId_.clear();
                 }
+                retryWaiters_.clear();
                 for (auto it = waiters_.begin(); it != waiters_.end();) {
                     if (it->imageId == job->imageId && it->key == job->key) {
+                        if (scheduleRetry) {
+                            retryWaiters_.push_back(*it);
+                        }
                         callbacks.push_back(std::move(it->onReady));
                         it = waiters_.erase(it);
                     } else {
@@ -485,6 +567,14 @@ private:
             // has returned from it is never called back.
             for (const auto& callback : callbacks) {
                 callback();
+            }
+            if (scheduleRetry) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (!queued_) {
+                    retry_ = std::move(job);
+                } else {
+                    retryWaiters_.clear();
+                }
             }
         }
     }
@@ -501,6 +591,12 @@ private:
     std::vector<Waiter> waiters_;
     std::string failedId_;
     std::uint64_t failedKey_ = 0;
+    // A failed photo waiting for its slow retry, and who to tell when it runs.
+    std::unique_ptr<Job> retry_;
+    std::vector<Waiter> retryWaiters_;
+    std::chrono::steady_clock::time_point retryAt_;
+    bool retryingNow_ = false;
+    std::map<std::string, int> slowRetryCount_;
 };
 
 }

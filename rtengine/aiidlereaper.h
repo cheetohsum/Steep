@@ -48,6 +48,20 @@ public:
     // longer; memguard still trims them at once under memory pressure.
     static constexpr long long kIdleLongMs = 10 * 60000;
 
+    // Preferences > AI models: on a machine with memory to spare, the models
+    // that normally leave after a minute (click selection, the wide-fill
+    // denoiser and its twelve-second load) wait the long interval too.
+    static void setKeepLoaded(bool keep)
+    {
+        instance().keepLoaded = keep;
+    }
+
+    // The idle interval for those models.
+    static long long idleMs()
+    {
+        return instance().keepLoaded ? kIdleLongMs : kIdleMs;
+    }
+
     static long long nowMs()
     {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -124,6 +138,7 @@ private:
         std::vector<std::function<void(bool)>> callbacks;
         bool started = false;
         std::atomic<bool> exiting{false};
+        std::atomic<bool> keepLoaded{false};
     };
 
     static State& instance()

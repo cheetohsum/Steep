@@ -48,9 +48,14 @@ public:
     AIRemoverEngine& operator=(const AIRemoverEngine&) = delete;
 
     /// Directory holding rorem_unet.onnx (+ .data), rorem_vae_encoder.onnx
-    /// and rorem_vae_decoder.onnx; set once by rtengine::init.
+    /// and rorem_vae_decoder.onnx. Empty turns the engine off (Preferences >
+    /// AI models); a loaded model is released when the directory changes.
     void setModelDirectory(const Glib::ustring& directory);
     bool available() const;
+
+    /// What the system must be able to commit before a fill is started, in
+    /// bytes, given whether the denoiser is already in memory.
+    static unsigned long long memoryNeeded(bool denoiserLoaded);
 
     /// Longest side the model works at.
     static constexpr int maxSide = 1024;

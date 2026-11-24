@@ -52,4 +52,7 @@ public:
     void enabledChanged() override;
 
     Adjuster* getAmountSlider() { return amount; }
+    // True for this tool's own history events (they are registered at
+    // runtime, so callers cannot name them); the Mask pane bridge uses it.
+    bool ownsEvent(int id) const { return id == int(EvClarityEnabled) || id == int(EvClarityAmount) || id == int(EvClarityRadius); }
 };

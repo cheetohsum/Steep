@@ -789,10 +789,19 @@ void BatchQueue::error(const Glib::ustring& descr)
     if (listener) {
         BatchQueueListener* const bql = listener;
 
+        // The failed entry was put back in the queue above, so report the real
+        // size: reporting 0 here disabled the Export Queue button while photos
+        // were still waiting in the queue.
+        int qsize = 0;
+        {
+            MYREADERLOCK(l, entryRW);
+            qsize = fd.size();
+        }
+
         idle_register.add(
-            [bql, descr]() -> bool
+            [bql, descr, qsize]() -> bool
             {
-                bql->queueSizeChanged(0, false, true, descr);
+                bql->queueSizeChanged(qsize, false, true, descr);
                 return false;
             }
         );

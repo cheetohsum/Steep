@@ -56,6 +56,7 @@ enum GeometryIndex {
     VISIBLE_TARGET_CIRCLE,
     VISIBLE_CURSOR_PREVIEW,
     VISIBLE_STROKE_PREVIEW,
+    VISIBLE_OBJECT_PICK,
     VISIBLE_OBJECT_COUNT
 };
 
@@ -218,6 +219,97 @@ void BrushAreaOverlay::drawInnerGeometry (Cairo::RefPtr<Cairo::Context> &cr, Obj
 void BrushAreaOverlay::drawToMOChannel (Cairo::RefPtr<Cairo::Context> &cr, unsigned short id, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem)
 {
     // Not hoverable — purely a visual overlay.
+}
+
+// ---- ObjectPickOverlay implementation ----
+
+void ObjectPickOverlay::clear ()
+{
+    surface_.clear();
+    clickX_ = clickY_ = -1;
+}
+
+void ObjectPickOverlay::setReport (const rtengine::SmartRepairReport& report)
+{
+    clear();
+    const int w = report.gridWidth, h = report.gridHeight;
+
+    if (!report.grid || w < 1 || h < 1 || report.grid->size() != size_t(w) * h) {
+        return;
+    }
+
+    const std::vector<unsigned char>& grid = *report.grid;
+    auto surface = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, w, h);
+    unsigned char* const pixels = surface->get_data();
+    const int stride = surface->get_stride();
+    const auto object = [&](int x, int y) {
+        return x >= 0 && y >= 0 && x < w && y < h && grid[size_t(y) * w + x] == 255;
+    };
+    // Amber, like the brush ring. Premultiplied, native-endian ARGB.
+    const double red = 1.0, green = 0.78, blue = 0.25;
+
+    for (int y = 0; y < h; ++y) {
+        guint32* const row = reinterpret_cast<guint32*>(pixels + size_t(y) * stride);
+
+        for (int x = 0; x < w; ++x) {
+            const unsigned char cell = grid[size_t(y) * w + x];
+            double alpha = 0.;
+
+            if (cell == 255) {
+                // Two cells of outline: one alone vanishes when the grid is
+                // drawn smaller than the screen.
+                const bool edge = !object(x - 1, y) || !object(x + 1, y) || !object(x, y - 1) || !object(x, y + 1)
+                    || !object(x - 2, y) || !object(x + 2, y) || !object(x, y - 2) || !object(x, y + 2)
+                    || !object(x - 1, y - 1) || !object(x + 1, y - 1) || !object(x - 1, y + 1) || !object(x + 1, y + 1);
+                alpha = edge ? 0.95 : 0.30;
+            } else if (cell) {
+                alpha = 0.13;
+            }
+
+            const guint32 a = guint32(alpha * 255. + .5);
+            row[x] = (a << 24) | (guint32(red * a + .5) << 16) | (guint32(green * a + .5) << 8) | guint32(blue * a + .5);
+        }
+    }
+
+    surface->mark_dirty();
+    surface_ = surface;
+    x_ = report.x;
+    y_ = report.y;
+    width_ = report.width;
+    height_ = report.height;
+    clickX_ = report.clickX;
+    clickY_ = report.clickY;
+}
+
+void ObjectPickOverlay::drawOuterGeometry (Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem)
+{
+}
+
+void ObjectPickOverlay::drawInnerGeometry (Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem)
+{
+    if (!(flags & F_VISIBLE) || !surface_) {
+        return;
+    }
+
+    int sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0;
+    coordSystem.imageCoordToScreen (x_, y_, sx0, sy0);
+    coordSystem.imageCoordToScreen (x_ + width_, y_ + height_, sx1, sy1);
+
+    if (sx1 <= sx0 || sy1 <= sy0) {
+        return;
+    }
+
+    cr->save();
+    cr->translate (sx0, sy0);
+    cr->scale (double (sx1 - sx0) / surface_->get_width(), double (sy1 - sy0) / surface_->get_height());
+    cr->set_source (surface_, 0., 0.);
+    cr->paint();
+    cr->restore();
+}
+
+void ObjectPickOverlay::drawToMOChannel (Cairo::RefPtr<Cairo::Context> &cr, unsigned short id, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem)
+{
+    // Not hoverable -- purely a visual overlay.
 }
 
 // ---- Main Spot implementation ----
@@ -472,7 +564,32 @@ Spot::Spot() :
             startStatusPolling();
         }
     });
+    // A click can mean the part, the object or the group around it; the
+    // engine guesses, and this overrules the guess for the last pick.
+    Gtk::Box* const objectSizeBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+    Gtk::Label* const objectSizeLabel = Gtk::manage(new Gtk::Label(M("TP_SMART_OBJECT_SIZE"), Gtk::ALIGN_START));
+    objectSize_ = Gtk::manage(new Gtk::ComboBoxText());
+    objectSize_->append(M("TP_SMART_OBJECT_SIZE_AUTO"));
+    objectSize_->append(M("TP_SMART_OBJECT_SIZE_SMALL"));
+    objectSize_->append(M("TP_SMART_OBJECT_SIZE_MEDIUM"));
+    objectSize_->append(M("TP_SMART_OBJECT_SIZE_LARGE"));
+    objectSize_->set_active(0);
+    objectSizeBox->set_tooltip_text(M("TP_SMART_OBJECT_SIZE_TIP"));
+    objectSizeBox->pack_start(*objectSizeLabel, Gtk::PACK_SHRINK);
+    objectSizeBox->pack_start(*objectSize_, Gtk::PACK_EXPAND_WIDGET);
+    objectSizeConn_ = objectSize_->signal_changed().connect([this]() {
+        if (auto* entry = lastPickedObject()) {
+            const int size = std::max(0, objectSize_->get_active_row_number());
+            if (entry->objectSize == size) return;
+            entry->objectSize = size;
+            awaitingSmartResult_ = true;
+            busySeenActive_ = false;
+            if (listener) listener->panelChanged(EvSpotEntry, M("TP_SPOT_ENTRYCHANGED"));
+            startStatusPolling();
+        }
+    });
     aiContent->pack_start(*pickObject_, Gtk::PACK_SHRINK);
+    aiContent->pack_start(*objectSizeBox, Gtk::PACK_SHRINK);
     aiContent->pack_start(*objectGrow_, Gtk::PACK_SHRINK);
     aiContent->pack_start(*pickShadow_, Gtk::PACK_SHRINK);
 
@@ -500,6 +617,16 @@ Spot::Spot() :
         }
     });
     aiContent->pack_start(*highQuality_, Gtk::PACK_SHRINK);
+    // The model can be installed, removed or switched off in Preferences
+    // while this panel exists.
+    highQuality_->signal_map().connect(sigc::mem_fun(*this, &Spot::syncHighQualityAvailability));
+    fillNote_ = Gtk::manage(new Gtk::Label("", Gtk::ALIGN_START));
+    fillNote_->set_line_wrap(true);
+    fillNote_->set_xalign(0.f);
+    fillNote_->set_max_width_chars(34);
+    fillNote_->get_style_context()->add_class("smart-repair-note");
+    fillNote_->set_no_show_all(true);
+    aiContent->pack_start(*fillNote_, Gtk::PACK_SHRINK);
 
 #ifdef RT_AI_MASKING
     // The inpainting model is ~200 MB and some builds ship without it, so offer
@@ -613,6 +740,9 @@ Spot::Spot() :
     strokePreviewLine.innerLineWidth = float(SpotParams::minRadius * 2);
     // Painted stroke reads as a bright amber ribbon while dragging.
     strokePreviewLine.setInnerLineColor(1.0, 0.78, 0.25);
+
+    objectOverlay_.datum = Geometry::IMAGE;
+    objectOverlay_.setActive(false);
 
     auto m = ProcEventMapper::getInstance();
     EvSpotEnabled = m->newEvent(ALLNORAW, "HISTORY_MSG_SPOT");
@@ -1032,6 +1162,45 @@ void Spot::startStatusPolling()
     }, 100);
 }
 
+void Spot::syncHighQualityAvailability()
+{
+    if (!highQuality_) return;
+#ifdef RT_AI_MASKING
+    const bool installed = rtengine::AIRemoverEngine::getInstance().available();
+#else
+    const bool installed = false;
+#endif
+    if (installed == highQuality_->get_sensitive()) return;
+    highQuality_->set_sensitive(installed);
+    highQuality_->set_active(installed);
+    highQuality_->set_tooltip_text(M(installed ? "TP_SMART_HIGH_QUALITY_TIP" : "TP_SMART_HIGH_QUALITY_MISSING"));
+    if (!installed && fillNote_) fillNote_->hide();
+}
+
+void Spot::applyRepairReport(const rtengine::SmartRepairReport& report)
+{
+    if (report.grid) {
+        objectOverlay_.setReport(report);
+    } else {
+        objectOverlay_.clear();
+    }
+
+    if (fillNote_) {
+        Glib::ustring note;
+        if (report.fill == SmartRepairReport::Fill::WideSkippedMemory) {
+            note = report.neededGb > 0.f
+                ? Glib::ustring::compose(M("TP_SMART_HQ_SKIPPED_MEMORY"),
+                                         Glib::ustring::format(std::fixed, std::setprecision(0), report.freeGb),
+                                         Glib::ustring::format(std::fixed, std::setprecision(0), report.neededGb))
+                : M("TP_SMART_HQ_SKIPPED_OOM");
+        } else if (report.fill == SmartRepairReport::Fill::WideFailed) {
+            note = M("TP_SMART_HQ_FAILED");
+        }
+        fillNote_->set_text(note);
+        fillNote_->set_visible(!note.empty());
+    }
+}
+
 void Spot::pollSmartStatus()
 {
     if (!smartStatus_[0]) return;
@@ -1039,6 +1208,27 @@ void Spot::pollSmartStatus()
     const bool failed = status.stage == SmartRepairStage::Failed;
     const bool cancelled = status.stage == SmartRepairStage::Cancelled;
     const bool busy = status.stage != SmartRepairStage::Idle && status.stage != SmartRepairStage::Ready && !failed && !cancelled;
+    {
+        const auto report = rtengine::SmartRepairReports::get();
+        if (report.serial != reportSerial_) {
+            reportSerial_ = report.serial;
+            applyRepairReport(report);
+        }
+        // The selection shows from the moment the model has drawn it until
+        // the fill lands (the object is gone from the picture after that).
+        const auto* const picked = lastPickedObject();
+        const bool showPick = busy && objectOverlay_.hasGrid() && picked
+            && picked->objectPoints.front().x == objectOverlay_.clickX()
+            && picked->objectPoints.front().y == objectOverlay_.clickY();
+        if (showPick != objectOverlay_.isVisible()) {
+            objectOverlay_.setVisible(showPick);
+            if (showPick) {
+                // The brush dab that marked the click has done its job.
+                strokePreviewLine.setActive(false);
+            }
+            queueCanvasRedraw();
+        }
+    }
     const char* tip = failed ? "TP_SMART_FAILED" : cancelled ? "TP_SMART_CANCELLED" : busy ? "TP_SMART_WORKING" : "TP_SMART_READY";
     for (int i = 0; i < 4; ++i) {
         const bool present = status.methods & (1u << i);
@@ -1395,6 +1585,8 @@ void Spot::createGeometry ()
     EditSubscriber::visibleGeometry.at (j++) = &cursorPreviewCircle; // VISIBLE_OBJECT_COUNT + 6
     assert(j - visibleOffset == VISIBLE_STROKE_PREVIEW);
     EditSubscriber::visibleGeometry.at (j++) = &strokePreviewLine;   // VISIBLE_OBJECT_COUNT + 7
+
+    EditSubscriber::visibleGeometry.at (j++) = &objectOverlay_;      // VISIBLE_OBJECT_COUNT + 8
     static_cast<void>(visibleOffset);
 }
 
@@ -1844,6 +2036,11 @@ bool Spot::button1Released()
                 se.objectPoints.push_back(pt);
                 se.objectGrow = float(objectGrow_->getValue() / 20.);
                 se.objectShadow = pickShadow_->get_active();
+                // Each pick starts as the engine's own guess.
+                objectSizeConn_.block(true);
+                objectSize_->set_active(0);
+                objectSizeConn_.block(false);
+                objectOverlay_.clear();
             }
 
             spots.push_back(se);

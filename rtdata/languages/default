@@ -336,6 +336,7 @@ GENERAL_SEARCH;Search
 MAIN_MENU_SEC_COLOUR;Colour management
 MAIN_MENU_SEC_OVERLAYS;Overlays
 MAIN_MENU_SEC_WINDOWS;Windows
+MASK_GLOBAL_ONLY_TOOL_TOOLTIP;This tool has no per-mask version, so it always changes the whole photo. Set it on the Edit pane.
 PREFERENCES_EXTENSION;Extension
 PREFERENCES_FOUND;Found:
 QUEUE_EXPORT_BUTTON;Export queue
@@ -2580,6 +2581,24 @@ PREFERENCES_APPEARANCE_CROPMASKCOLOR;Crop mask color
 PREFERENCES_APPEARANCE_MAINFONT;Main font
 PREFERENCES_APPEARANCE_NAVGUIDECOLOR;Navigator guide color
 PREFERENCES_APPEARANCE_THEME;Theme
+PREFERENCES_AIMODELS_AUTO;Automatic (%1)
+PREFERENCES_AIMODELS_FOLDERS;Models are read from two folders. To add one by hand, put its files in either:\n%1\n%2\nAlternative click-selection models (any SAM 2.1 size) each go in a sub-folder of their own.
+PREFERENCES_AIMODELS_FRAME;Model for each job
+PREFERENCES_AIMODELS_INTRO;Steep runs its AI models on this computer. Where more than one model is installed for a job you can choose between them here: the larger ones are more accurate, the smaller ones load faster and need less memory.
+PREFERENCES_AIMODELS_KEEP;Keep models in memory for ten minutes after use
+PREFERENCES_AIMODELS_KEEP_TIP;Click selection and the large-area fill model are normally released a minute after their last use, and take up to twelve seconds to load again. Keeping them makes repeated removals start at once, at the cost of several gigabytes of memory held while they wait. They are still released straight away if the computer runs short of memory.
+PREFERENCES_AIMODELS_MEMORY;Memory
+PREFERENCES_AIMODELS_NONE;Not installed
+PREFERENCES_AIMODELS_OFF;Off (always use the standard fill)
+PREFERENCES_AIMODELS_ON;On: %1 (%2)
+PREFERENCES_AIMODELS_SCENE;Scene masks
+PREFERENCES_AIMODELS_SCENE_TIP;Finds sky, people, buildings, plants and the other classes an AI mask can target.
+PREFERENCES_AIMODELS_SELECT;Click selection
+PREFERENCES_AIMODELS_SELECT_TIP;Turns a click into the outline of the object under it: Remove Object picks, picked masks and cut-outs. A larger model takes longer for the first click on each photo.
+PREFERENCES_AIMODELS_SUBJECT;Subject mask
+PREFERENCES_AIMODELS_SUBJECT_TIP;Separates the main subject from its background, including hair and fur with the larger model.
+PREFERENCES_AIMODELS_WIDEFILL;Large-area object fill
+PREFERENCES_AIMODELS_WIDEFILL_TIP;Rebuilds what was behind a large removed object. It is slow and needs a graphics card and about 9 GB of free memory; when off, or when memory is short, the standard fill is used.
 PREFERENCES_APPLNEXTSTARTUP;restart
 PREFERENCES_AUTOMONPROFILE;Use operating system's main monitor color profile
 PREFERENCES_AUTOMONPROFILE_WARNOSX;Automatic system monitor-profile detection is unavailable on macOS. Choose a monitor ICC profile manually.
@@ -2782,6 +2801,7 @@ PREFERENCES_TAB_DYNAMICPROFILE;Dynamic profile rules
 PREFERENCES_TAB_FAVORITES;Favorites
 PREFERENCES_TAB_GENERAL;General
 PREFERENCES_TAB_IMPROC;Image processing
+PREFERENCES_TAB_AIMODELS;AI models
 PREFERENCES_TAB_PERFORMANCE;Performance
 PREFERENCES_TAB_SOUND;Sounds
 PREFERENCES_THUMBNAIL_INSPECTOR_JPEG;Embedded JPEG preview
@@ -5534,12 +5554,21 @@ TP_SMART_READY;Final repair applied
 TP_SMART_DUST_SCANNING;Scanning for dust
 TP_SMART_DUST_SENSITIVITY;Sensitivity
 TP_SMART_FEATHER;Feather
+TP_SMART_HQ_FAILED;The high-quality fill could not run, so the standard fill was used.
+TP_SMART_HQ_SKIPPED_MEMORY;High quality was skipped: it needs %2 GB of free memory and only %1 GB is available. The standard fill was used. Closing other programs, then Retry, runs it.
+TP_SMART_HQ_SKIPPED_OOM;High quality ran out of memory part-way, so the standard fill was used. Closing other programs, then Retry, runs it.
 TP_SMART_HIGH_QUALITY;High quality for large areas
 TP_SMART_HIGH_QUALITY_MISSING;Needs the optional high-quality removal models (about 5.5 GB) in the models folder.
 TP_SMART_HIGH_QUALITY_TIP;Rebuild large removed areas with a slower model that reconstructs the scene (walls, ground, edges) instead of smoothing over it. Needs a graphics card and can take a minute. Small repairs are not affected.
 TP_SMART_OBJECT_GROW;Expand selection
 TP_SMART_OBJECT_GROW_TIP;How far the removal reaches beyond the picked object's outline. Raise it when an edge or fringe of the object is left behind.
 TP_SMART_OBJECT_SHADOW;Include shadow
+TP_SMART_OBJECT_SIZE;Selection
+TP_SMART_OBJECT_SIZE_AUTO;Automatic
+TP_SMART_OBJECT_SIZE_LARGE;Largest
+TP_SMART_OBJECT_SIZE_MEDIUM;Medium
+TP_SMART_OBJECT_SIZE_SMALL;Smallest
+TP_SMART_OBJECT_SIZE_TIP;A click can mean a part (a car door), the object (the car) or the object with what it touches. The selection is shown on the picture while the fill is worked out; if it took too much or too little, choose another size here for the last pick.
 TP_SMART_OBJECT_SHADOW_TIP;Also remove the dark shadow attached to the base of the picked object.
 TP_SMART_PICK_OBJECT;Click picks whole object
 TP_SMART_PICK_OBJECT_TIP;A single click selects the whole object under the pointer and removes it. Ctrl+click adds a part the selection missed, Alt+click protects something it should not have taken. Dragging still paints a freeform stroke. Turn this off to make a click a plain brush dab.

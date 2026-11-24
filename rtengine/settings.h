@@ -92,6 +92,13 @@ public:
     double          level123_cbdl;
     Glib::ustring   lensfunDbDirectory; // The directory containing the lensfun database. If empty, the system defaults will be used, as described in https://lensfun.github.io/manual/latest/dbsearch.html
     Glib::ustring   lensfunDbBundleDirectory;
+    // Preferences > AI models: the id of the model each job uses (see
+    // aimodels.h); empty = the default for whatever is installed.
+    Glib::ustring   aiModelScene;
+    Glib::ustring   aiModelSubject;
+    Glib::ustring   aiModelSelect;
+    Glib::ustring   aiModelWideFill;
+    bool            aiKeepLoaded = false;   // idle models wait ten minutes, not one
     int             cropsleep;
     double          reduchigh;
     double          reduclow;

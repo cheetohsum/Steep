@@ -8,6 +8,7 @@ set(PROCPARAM_SRCS
 set(RTENGINESOURCEFILES
     depthestimator.cc
     samselector.cc
+    aimodels.cc
     alpha.cc
     ahd_demosaic_RT.cc
     aidenoise.cc
@@ -182,7 +183,7 @@ if(NOT WITH_SYSTEM_KLT)
 endif()
 
 if(WITH_AI_MASKING)
-    list(APPEND RTENGINESOURCEFILES aisegmentation.cc aimaskcache.cc aimaskinput.cc aiinpainting.cc airemover.cc aisubjectmodel.cc)
+    list(APPEND RTENGINESOURCEFILES aisegmentation.cc aimaskcache.cc aimaskinput.cc aiinpainting.cc airemover.cc aisubjectmodel.cc onnxdims.cc)
 endif()
 
 add_library(rtengine STATIC "${RTENGINESOURCEFILES}")

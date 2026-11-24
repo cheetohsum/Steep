@@ -57,5 +57,8 @@ public:
     void setAdjusterBehavior(bool strengthAdd);
 
     Adjuster* getStrengthSlider() { return strength; }
+    // True for this tool's own history events (they are registered at
+    // runtime, so callers cannot name them); the Mask pane bridge uses it.
+    bool ownsEvent(int id) const { return id == int(EvDehazeEnabled) || id == int(EvDehazeStrength) || id == int(EvDehazeDepth) || id == int(EvDehazeSaturation); }
 };
 

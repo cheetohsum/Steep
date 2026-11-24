@@ -67,14 +67,14 @@ struct SamSelector::Impl {
     void releaseIfIdle(bool force)
     {
         std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
-        if (!lock.owns_lock() || !encoder || (!force && AIIdleReaper::nowMs() - lastUse.load() < AIIdleReaper::kIdleMs)) {
+        if (!lock.owns_lock() || !encoder || (!force && AIIdleReaper::nowMs() - lastUse.load() < AIIdleReaper::idleMs())) {
             return;
         }
         embeddings.clear();
         embeddingBytes = 0;
         encoder.reset();
         decoder.reset();
-        std::fprintf(stderr, "Click selection: SAM unloaded after %lld s idle\n", AIIdleReaper::kIdleMs / 1000);
+        std::fprintf(stderr, "Click selection: SAM unloaded after %lld s idle\n", AIIdleReaper::idleMs() / 1000);
     }
 
     void prepare()
@@ -158,10 +158,26 @@ SamSelector& SamSelector::getInstance()
 void SamSelector::setModelDirectory(const Glib::ustring& directory)
 {
     std::lock_guard<std::mutex> lock(impl->mutex);
+    if (impl->directory != directory) {
+#ifdef RT_AI_MASKING
+        // Another model: its sessions and the encodings made with the old
+        // one go; prepare() rebuilds on the next selection.
+        impl->embeddings.clear();
+        impl->embeddingBytes = 0;
+        impl->encoder.reset();
+        impl->decoder.reset();
+#endif
+    }
     impl->directory = directory;
     impl->haveModels = !directory.empty()
                        && Glib::file_test(Glib::build_filename(directory, "sam2_encoder.onnx"), Glib::FILE_TEST_EXISTS)
                        && Glib::file_test(Glib::build_filename(directory, "sam2_decoder.onnx"), Glib::FILE_TEST_EXISTS);
+}
+
+std::string SamSelector::modelTag() const
+{
+    std::lock_guard<std::mutex> lock(impl->mutex);
+    return impl->directory.raw();
 }
 
 bool SamSelector::available() const
@@ -317,10 +333,10 @@ void SamSelector::Impl::decode(const std::vector<std::array<float, 3>>& prompts,
 
 array2D<float> SamSelector::select(const Imagefloat& src, const std::string& id,
                                    const std::vector<std::array<float, 3>>& prompts, int candidate,
-                                   const array2D<float>* reference)
+                                   const array2D<float>* reference, Candidates* candidates)
 {
 #ifndef RT_AI_MASKING
-    (void)src; (void)id; (void)prompts; (void)candidate; (void)reference;
+    (void)src; (void)id; (void)prompts; (void)candidate; (void)reference; (void)candidates;
     return array2D<float>();
 #else
     if (prompts.empty() || prompts.size() > 128 || src.getWidth() < 2 || src.getHeight() < 2) return array2D<float>();
@@ -338,6 +354,19 @@ array2D<float> SamSelector::select(const Imagefloat& src, const std::string& id,
         // several prompts its first is the one they jointly describe, with a
         // single click the highest-scoring whole candidate reads best.
         int chosen = 0;
+        if (candidates) {
+            std::array<std::pair<long, int>, 3> areas;
+            for (int c = 0; c < 3; ++c) {
+                long n = 0;
+                for (int i = 0; i < 256 * 256; ++i) n += data[c * 256 * 256 + i] > 0.f;
+                areas[c] = {n, c};
+            }
+            std::sort(areas.begin(), areas.end());
+            for (int rank = 0; rank < 3; ++rank) {
+                candidates->share[rank] = areas[rank].first / float(256 * 256);
+                candidates->score[rank] = std::isfinite(scores[areas[rank].second]) ? scores[areas[rank].second] : 0.f;
+            }
+        }
         if (reference && reference->getWidth() == src.getWidth() && reference->getHeight() == src.getHeight()) {
             const int w = src.getWidth(), h = src.getHeight();
             float bestIou = -1.f;

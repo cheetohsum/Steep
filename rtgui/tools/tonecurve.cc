@@ -1152,3 +1152,14 @@ void ToneCurve::autoMatchedToneCurveChanged(rtengine::procparams::ToneCurveMode 
         }
     );
 }
+
+void ToneCurve::setMaskMode(bool maskMode, const Glib::ustring& why)
+{
+    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{
+             autolevels, sclip, histmatching, clampOOG, hrenabled, hlrbox, hlbl, hlth}) {
+        if (w) {
+            w->set_sensitive(!maskMode);
+            w->set_tooltip_text(why);
+        }
+    }
+}

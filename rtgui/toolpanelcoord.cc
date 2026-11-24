@@ -30,6 +30,8 @@
 #include <string>
 
 #include "rtengine/rt_math.h"
+#include "rtengine/curves.h"
+#include "rtengine/diagonalcurvetypes.h"
 
 #include "autoedit.h"
 #include "imagearea.h"
@@ -1466,6 +1468,51 @@ void ToolPanelCoordinator::notebookPageChanged(Gtk::Widget* page, guint page_num
     // Legacy function - no longer used (mode switching handled by modeChanged)
 }
 
+namespace
+{
+bool isLinearToneCurve(const std::vector<double>& curve)
+{
+    return curve.size() <= 1 || curve[0] == double(DCT_Linear);
+}
+
+// The second curve applied to the result of the first, as one curve.
+std::vector<double> composeToneCurves(const std::vector<double>& first, const std::vector<double>& second)
+{
+    if (isLinearToneCurve(second)) {
+        return first;
+    }
+
+    if (isLinearToneCurve(first)) {
+        return second;
+    }
+
+    const rtengine::DiagonalCurve c1(first);
+    const rtengine::DiagonalCurve c2(second);
+    constexpr int steps = 32;
+    std::vector<double> out{double(DCT_CatumullRom)};
+
+    for (int i = 0; i <= steps; ++i) {
+        const double x = double(i) / steps;
+        const double y = c2.getVal(std::max(0.0, std::min(1.0, c1.getVal(x))));
+        out.push_back(x);
+        out.push_back(std::max(0.0, std::min(1.0, y)));
+    }
+
+    return out;
+}
+}
+
+bool ToolPanelCoordinator::isBWBridgeEvent(int id) const
+{
+    using namespace rtengine;
+    return id == EvBWChmixEnabled || id == EvBWmethod
+           || id == EvBWred || id == EvBWoran || id == EvBWyell || id == EvBWgreen
+           || id == EvBWcyan || id == EvBWblue || id == EvBWpur || id == EvBWmag
+           || id == EvBWredgam || id == EvBWgreengam || id == EvBWbluegam
+           || id == EvBWNeutrals || id == EvBWTone || id == EvBWStrength
+           || id == EvBWfilter || id == EvBWsetting || id == EvNeutralBW;
+}
+
 bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine::ProcEvent& event)
 {
     if (params->locallab.spots.empty()) return false;
@@ -1539,8 +1586,17 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
     // Black & white belongs to the selected mask here: the widget carries that
     // spot's value, and the photo's own conversion is put back with the rest
     // of the globals afterwards. Setting it desaturates inside the mask.
-    if (id == EvBWChmixEnabled || id == EvBWmethod) {
-        spot.blwh = params->blackwhite.enabled;
+    if (isBWBridgeEvent(id)) {
+        const BlackWhiteParams& bw = params->blackwhite;
+        spot.blwh = bw.enabled;
+
+        // The mask converts with the same hue mixer, look, lens filter, tone
+        // shaping, print tone and amount as the photo-wide tool.
+        spot.bwMixer = {bw.mixerRed, bw.mixerOrange, bw.mixerYellow, bw.mixerGreen,
+                        bw.mixerCyan, bw.mixerBlue, bw.mixerPurple, bw.mixerMagenta};
+        spot.bwTone = {bw.neutrals, bw.gammaRed, bw.gammaGreen, bw.gammaBlue, bw.tone, bw.strength};
+        spot.bwFilter = bw.filter;
+        spot.bwSetting = bw.setting;
 
         // The panel's row model is what Locallab::write reads back, so a value
         // pushed only into procparams survives exactly until the next write --
@@ -1573,10 +1629,40 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
 
     // The tone curve and the L* curve have per-spot counterparts the engine
     // already turns into LUTs, so they can follow the mask like the sliders do.
-    if (id == EvToneCurve1) {
-        spot.rgbcurve = params->toneCurve.curve;
+    // A spot has one tone curve and one curve mode, so the two curves are
+    // folded into one (second applied to the result of the first) and the
+    // mode is the first curve's, or the second's when only that one is drawn.
+    // The spot ignores its curves until its curve switch is set to "std" --
+    // it defaults to "none", which is why a curve drawn on a mask did nothing.
+    if (id == EvToneCurve1 || id == EvToneCurve2 || id == EvToneCurveMode1 || id == EvToneCurveMode2) {
+        const ToneCurveParams& tc = params->toneCurve;
+        const bool first = !isLinearToneCurve(tc.curve);
+        spot.rgbcurve = composeToneCurves(tc.curve, tc.curve2);
 
-        if (spot.rgbcurve.size() > 1) {
+        switch (first ? tc.curveMode : tc.curveMode2) {
+            case ToneCurveMode::WEIGHTEDSTD:
+                spot.toneMethod = "two";
+                break;
+
+            case ToneCurveMode::LUMINANCE:
+                spot.toneMethod = "thr";
+                break;
+
+            case ToneCurveMode::FILMLIKE:
+            case ToneCurveMode::PERCEPTUAL:
+                spot.toneMethod = "fou";
+                break;
+
+            default:
+                spot.toneMethod = "one";
+                break;
+        }
+
+        // Drawn against display values, like the Exposure tool's own curve.
+        spot.rgbcurveGamma = true;
+
+        if (!isLinearToneCurve(spot.rgbcurve)) {
+            spot.qualitycurveMethod = "std";
             spot.expcolor = true;
             spot.visicolor = true;
         }
@@ -1587,7 +1673,8 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
     if (id == EvLLCurve) {
         spot.llcurve = params->labCurve.lcurve;
 
-        if (spot.llcurve.size() > 1) {
+        if (!isLinearToneCurve(spot.llcurve)) {
+            spot.qualitycurveMethod = "std";
             spot.expcolor = true;
             spot.visicolor = true;
         }
@@ -1621,9 +1708,11 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         bridged = true;
     }
 
-    if (id == EvVibrancePastels || id == EvVibranceSaturated) {
-        spot.saturated = params->vibrance.saturated;
-        spot.pastels = params->vibrance.pastels;
+    if (id == EvVibrancePastels || id == EvVibranceSaturated || id == EvVibranceEnabled
+            || id == EvVibranceProtectSkins || id == EvVibranceAvoidColorShift
+            || id == EvVibrancePastSatTog || id == EvVibrancePastSatThreshold) {
+        spot.saturated = params->vibrance.enabled ? params->vibrance.saturated : 0;
+        spot.pastels = params->vibrance.enabled ? params->vibrance.pastels : 0;
         spot.psthreshold = params->vibrance.psthreshold;
         spot.protectskins = params->vibrance.protectskins;
         spot.avoidcolorshift = params->vibrance.avoidcolorshift;
@@ -1635,8 +1724,13 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         bridged = true;
     }
 
-    if (id == EvShrAmount || id == EvShrRadius) {
-        spot.sharamount = params->sharpening.amount;
+    // Every sharpening control, not just amount and radius (and none of them
+    // reached this bridge before -- see the gate in panelChanged), so the
+    // whole tool looked dead on the Mask pane.
+    if (id == EvShrAmount || id == EvShrRadius || id == EvShrEnabled || id == EvShrThresh
+            || id == EvShrMethod || id == EvShrDRadius || id == EvShrDAmount
+            || id == EvShrDDamping || id == EvShrDIterations) {
+        spot.sharamount = params->sharpening.enabled ? params->sharpening.amount : 0;
         spot.sharradius = params->sharpening.radius;
         spot.sharcontrast = static_cast<int>(params->sharpening.contrast);
         if (spot.sharamount != 0) {
@@ -1646,15 +1740,89 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         bridged = true;
     }
 
-    if (id == EvSHHighlights || id == EvSHShadows) {
-        spot.highlights = params->sh.highlights;
-        spot.shadows = params->sh.shadows;
+    if (id == EvSHHighlights || id == EvSHShadows || id == EvSHEnabled || id == EvSHRadius
+            || id == EvSHHLTonalW || id == EvSHSHTonalW) {
+        spot.highlights = params->sh.enabled ? params->sh.highlights : 0;
+        spot.shadows = params->sh.enabled ? params->sh.shadows : 0;
+        spot.sh_radius = params->sh.radius;
         spot.h_tonalwidth = params->sh.htonalwidth;
         spot.s_tonalwidth = params->sh.stonalwidth;
         if (spot.highlights != 0 || spot.shadows != 0) {
             spot.expshadhigh = true;
             spot.visishadhigh = true;
         }
+        bridged = true;
+    }
+
+    if (id == EvProfileChanged && !pendingMaskGroupReset_.empty()) {
+        const rtengine::procparams::LocallabParams::LocallabSpot def;
+        for (ToolPanel* panel : pendingMaskGroupReset_) {
+            if (panel == toneCurve) {
+                spot.expcomp = def.expcomp;
+                spot.black = def.black;
+                spot.hlcompr = def.hlcompr;
+                spot.hlcomprthresh = def.hlcomprthresh;
+                spot.shcompr = def.shcompr;
+                spot.lightness = def.lightness;
+                spot.contrast = def.contrast;
+                spot.chroma = def.chroma;
+                spot.rgbcurve = def.rgbcurve;
+            } else if (panel == shadowshighlights) {
+                spot.highlights = def.highlights;
+                spot.shadows = def.shadows;
+                spot.h_tonalwidth = def.h_tonalwidth;
+                spot.s_tonalwidth = def.s_tonalwidth;
+                spot.sh_radius = def.sh_radius;
+            } else if (panel == vibrance) {
+                spot.saturated = def.saturated;
+                spot.pastels = def.pastels;
+                spot.psthreshold = def.psthreshold;
+                spot.protectskins = def.protectskins;
+                spot.avoidcolorshift = def.avoidcolorshift;
+                spot.pastsattog = def.pastsattog;
+            } else if (panel == sharpening) {
+                spot.sharamount = def.sharamount;
+                spot.sharradius = def.sharradius;
+                spot.sharcontrast = def.sharcontrast;
+            } else if (panel == blackwhite) {
+                spot.blwh = def.blwh;
+                spot.bwMixer = def.bwMixer;
+                spot.bwTone = def.bwTone;
+                spot.bwFilter = def.bwFilter;
+                spot.bwSetting = def.bwSetting;
+                locallab->setSelectedSpotBW(spot.blwh);
+            } else if (panel == whitebalance) {
+                spot.warm = def.warm;
+            } else if (panel == colorgrading) {
+                spot.labgridALow = def.labgridALow;
+                spot.labgridBLow = def.labgridBLow;
+                spot.labgridAHigh = def.labgridAHigh;
+                spot.labgridBHigh = def.labgridBHigh;
+            } else if (panel == lcurve) {
+                spot.llcurve = def.llcurve;
+            } else if (panel == texture || panel == clarity) {
+                spot.lcamount = def.lcamount;
+                spot.lcradius = def.lcradius;
+            } else if (panel == grain) {
+                spot.strengr = def.strengr;
+                spot.isogr = def.isogr;
+                spot.scalegr = def.scalegr;
+                spot.colorgr = def.colorgr;
+            } else if (panel == dehaze) {
+                spot.dehaz = def.dehaz;
+                spot.depth = def.depth;
+                spot.dehazeSaturation = def.dehazeSaturation;
+            }
+        }
+        pendingMaskGroupReset_.clear();
+        bridged = true;
+    }
+
+    if (bridgeColourToSpot(params, id, spot)) {
+        bridged = true;
+    }
+
+    if (bridgeDetailToSpot(params, id, spot)) {
         bridged = true;
     }
 
@@ -1665,9 +1833,254 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         params->sh = savedSH_;
         params->blackwhite = savedBlackWhite_;
         params->labCurve = savedLabCurve_;
+        restoreColourMaskGlobals(*params);
     }
 
     return bridged;
+}
+
+namespace
+{
+// Calibrated headlessly (steep-cli, mid-grey ramp, 2026-11-23): a spot's warm
+// moves the picture like the global temperature at ~1.4 units per mired
+// (warmer = positive both ways); the colour-correction grid moves Lab a/b by
+// one unit per ~365 grid units; global tint shifts a = -71 ln(green),
+// b = +51 ln(green); a Colour Grading wheel at saturation 1 shifts ~19.7 Lab
+// units toward its hue angle (0 = +a, 90 = +b).
+constexpr double kWarmPerMired = 1.4;
+constexpr double kGridPerLab = 365.0;
+constexpr double kTintA = -71.0;
+constexpr double kTintB = 51.0;
+constexpr double kGradeLabPerSat = 19.7;
+
+struct GridAB {
+    double a = 0.0;
+    double b = 0.0;
+};
+
+GridAB gradeWheel(double hueDeg, double sat)
+{
+    const double r = sat * kGradeLabPerSat * kGridPerLab;
+    const double h = hueDeg * rtengine::RT_PI / 180.0;
+    return {r * std::cos(h), r * std::sin(h)};
+}
+
+double clampGrid(double v)
+{
+    const double m = rtengine::procparams::LocallabParams::LABGRIDL_CORR_MAX;
+    return std::max(-m, std::min(m, v));
+}
+}
+
+bool ToolPanelCoordinator::bridgeColourToSpot(ProcParams* params, int id,
+                                              rtengine::procparams::LocallabParams::LocallabSpot& spot) const
+{
+    using namespace rtengine;
+    const bool wbEvent = id == EvWBTemp || id == EvWBGreen || id == EvWBMethod || id == EvPreviewStripColor;
+    const bool gradeEvent = id == EvColorGradingShadows || id == EvColorGradingMidtones
+                            || id == EvColorGradingHighlights || id == EvColorGradingGlobal
+                            || id == EvColorGradingEnabled;
+    if (!wbEvent && !gradeEvent) {
+        return false;
+    }
+
+    // Temperature -> the spot's warm/cool, a chromatic adaptation the
+    // vibrance block applies inside the mask. Measured from the photo's own
+    // white balance, so the slider reads as "this much warmer here".
+    if (wbEvent) {
+        const double t0 = std::max(1500, savedWB_.temperature);
+        const double t1 = std::max(1500, params->wb.temperature);
+        const double deltaMired = 1.0e6 / t1 - 1.0e6 / t0;
+        spot.warm = static_cast<int>(std::lround(std::max(-100.0, std::min(100.0, -kWarmPerMired * deltaMired))));
+        if (spot.warm != 0) {
+            spot.expvibrance = true;
+            spot.visivibrance = true;
+        }
+    }
+
+    // The colour strip also sets saturation and vibrance; on the Mask pane
+    // those go to the spot like the sliders they stand for.
+    if (id == EvPreviewStripColor) {
+        spot.chroma = params->toneCurve.saturation;
+        spot.pastels = params->vibrance.pastels;
+        spot.saturated = params->vibrance.saturated;
+        if (spot.chroma != 0) {
+            spot.expcolor = true;
+            spot.visicolor = true;
+        }
+        if (spot.pastels != 0 || spot.saturated != 0) {
+            spot.expvibrance = true;
+            spot.visivibrance = true;
+        }
+    }
+
+    // Tint and Colour Grading share the colour-correction grid: shadows on
+    // its low point, highlights on its high point, tint and the global and
+    // midtone wheels on both.
+    const double g0 = savedWB_.green > 0.0 ? savedWB_.green : 1.0;
+    const double g1 = params->wb.green > 0.0 ? params->wb.green : 1.0;
+    const double tintLog = std::log(g1 / g0);
+    const GridAB both{kTintA * tintLog * kGridPerLab, kTintB * tintLog * kGridPerLab};
+    GridAB low = both;
+    GridAB high = both;
+
+    const ColorGradingParams& cg = params->colorGrading;
+    if (cg.enabled) {
+        const GridAB g = gradeWheel(cg.globalHue, cg.globalSat);
+        const GridAB m = gradeWheel(cg.midtonesHue, cg.midtonesSat);
+        const GridAB sh = gradeWheel(cg.shadowsHue, cg.shadowsSat);
+        const GridAB hi = gradeWheel(cg.highlightsHue, cg.highlightsSat);
+        low.a += g.a + 0.5 * m.a + sh.a;
+        low.b += g.b + 0.5 * m.b + sh.b;
+        high.a += g.a + 0.5 * m.a + hi.a;
+        high.b += g.b + 0.5 * m.b + hi.b;
+    }
+
+    spot.labgridALow = clampGrid(low.a);
+    spot.labgridBLow = clampGrid(low.b);
+    spot.labgridAHigh = clampGrid(high.a);
+    spot.labgridBHigh = clampGrid(high.b);
+    if (spot.labgridALow != 0.0 || spot.labgridBLow != 0.0
+            || spot.labgridAHigh != 0.0 || spot.labgridBHigh != 0.0) {
+        spot.expcolor = true;
+        spot.visicolor = true;
+    }
+    return true;
+}
+
+void ToolPanelCoordinator::saveColourMaskGlobals(const ProcParams& params)
+{
+    savedWB_ = params.wb;
+    savedColorGrading_ = params.colorGrading;
+    savedHSV_ = params.hsvequalizer;
+    savedPointColor_ = params.pointcolor;
+    savedRGBCurves_ = params.rgbCurves;
+    savedTexture_ = params.texture;
+    savedClarity_ = params.clarity;
+    savedGrain_ = params.grain;
+    savedDehaze_ = params.dehaze;
+    savedDenoise_ = params.dirpyrDenoise;
+}
+
+void ToolPanelCoordinator::restoreColourMaskGlobals(ProcParams& params) const
+{
+    params.wb = savedWB_;
+    params.colorGrading = savedColorGrading_;
+    params.hsvequalizer = savedHSV_;
+    params.pointcolor = savedPointColor_;
+    params.rgbCurves = savedRGBCurves_;
+    params.texture = savedTexture_;
+    params.clarity = savedClarity_;
+    params.grain = savedGrain_;
+    params.dehaze = savedDehaze_;
+    params.dirpyrDenoise = savedDenoise_;
+}
+
+bool ToolPanelCoordinator::isDetailBridgeEvent(int id) const
+{
+    using namespace rtengine;
+    return (texture && texture->ownsEvent(id)) || (clarity && clarity->ownsEvent(id))
+           || (grain && grain->ownsEvent(id)) || (dehaze && dehaze->ownsEvent(id));
+}
+
+bool ToolPanelCoordinator::bridgeDetailToSpot(ProcParams* params, int id,
+                                              rtengine::procparams::LocallabParams::LocallabSpot& spot) const
+{
+    using namespace rtengine;
+    bool bridged = false;
+
+    // Texture and Clarity -> the spot's local contrast (the same unsharp-mask
+    // local contrast the global tools run, at the tool's own radius). A spot
+    // has one such slot, so the two share it: amounts add, the radius is
+    // their amount-weighted mean. The spot's amount runs 0..1 only, so the
+    // softening half of either slider has no per-mask form and reads as 0.
+    if ((texture && texture->ownsEvent(id)) || (clarity && clarity->ownsEvent(id))) {
+        const double tA = params->texture.enabled ? std::max(0.0, params->texture.amount) : 0.0;
+        const double cA = params->clarity.enabled ? std::max(0.0, params->clarity.amount) : 0.0;
+        spot.lcamount = std::min(1.0, (tA + cA) / 100.0);
+        if (tA + cA > 0.0) {
+            spot.lcradius = static_cast<int>(std::lround(
+                (tA * params->texture.radius + cA * params->clarity.radius) / (tA + cA)));
+            spot.localcontMethod = "loc";
+            spot.lcdarkness = 1.0;
+            spot.lclightness = 1.0;
+            spot.expcontrast = true;
+            spot.visicontrast = true;
+        }
+        bridged = true;
+    }
+
+    // Grain -> the spot's film grain, run by the Grain tool's own engine
+    // (colorgr >= 0 selects it over the spot's older grain), so strength, ISO,
+    // size and dye colour mean on a mask what they mean on the photo.
+    if (grain && grain->ownsEvent(id)) {
+        spot.strengr = params->grain.enabled ? params->grain.strength : 0;
+        spot.isogr = params->grain.iso;
+        spot.scalegr = params->grain.scale;
+        spot.colorgr = params->grain.color;
+        if (spot.strengr > 0) {
+            spot.blMethod = "blur";
+            spot.expblur = true;
+            spot.visiblur = true;
+        }
+        bridged = true;
+    }
+
+    // Dehaze -> the spot's dehaze, which runs the very same dehaze routine.
+    if (dehaze && dehaze->ownsEvent(id)) {
+        spot.dehaz = params->dehaze.enabled ? params->dehaze.strength : 0;
+        spot.depth = params->dehaze.depth;
+        spot.dehazeSaturation = params->dehaze.saturation;
+        if (spot.dehaz != 0) {
+            spot.expreti = true;
+            spot.visireti = true;
+        }
+        bridged = true;
+    }
+
+    return bridged;
+}
+
+void ToolPanelCoordinator::setGlobalOnlyToolsSensitive(bool sensitive)
+{
+    // No per-spot form exists for these, so on the Mask pane they could only
+    // ever recolour the whole photo. Greyed out there, with the reason.
+    const Glib::ustring why = sensitive ? Glib::ustring() : M("MASK_GLOBAL_ONLY_TOOL_TOOLTIP");
+    for (ToolPanel* panel : std::initializer_list<ToolPanel*>{
+             hsvequalizer, pointcolor, rgbcurves, dirpyrdenoise, aidenoise, preprocess,
+             lighteffects, pcvignette, tiltshift, filmPresets, doubleExposure}) {
+        auto* foldable = dynamic_cast<FoldableToolPanel*>(panel);
+        if (foldable && foldable->getExpander()) {
+            foldable->getExpander()->set_sensitive(sensitive);
+            foldable->getExpander()->set_tooltip_text(why);
+        }
+    }
+    // Calibration has nothing that follows a mask; nor do the Detail and
+    // Effects strips (they also drive sharpening and the vignette). Texture,
+    // Clarity, Grain and Dehaze stay live: they follow it. Noise reduction
+    // does not: the spot denoiser measured inert even at full strength
+    // (2026-11-23), so it stays global-only.
+    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{calibrationGroup}) {
+        if (w) {
+            w->set_sensitive(sensitive);
+            w->set_tooltip_text(why);
+        }
+    }
+    for (PreviewStrip* strip : {detailStrip_, effectsStrip_}) {
+        if (strip) {
+            strip->set_sensitive(sensitive);
+            strip->set_tooltip_text(why);
+        }
+    }
+    // Inside tools that do follow a mask, the controls that cannot: auto
+    // levels, highlight reconstruction and the matched curve work on the raw
+    // photo; B&W's method, auto mixer and its own curves have no mask form.
+    if (toneCurve) {
+        toneCurve->setMaskMode(!sensitive, why);
+    }
+    if (blackwhite) {
+        blackwhite->setMaskMode(!sensitive, why);
+    }
 }
 
 void ToolPanelCoordinator::loadSpotIntoGlobalTools()
@@ -1715,7 +2128,100 @@ void ToolPanelCoordinator::loadSpotIntoGlobalTools()
     tempParams.sh.htonalwidth = spot.h_tonalwidth;
     tempParams.sh.stonalwidth = spot.s_tonalwidth;
 
+    {
+        const bool curvesOn = spot.qualitycurveMethod != "none";
+        tempParams.toneCurve.curve = curvesOn ? spot.rgbcurve : std::vector<double>{double(DCT_Linear)};
+        tempParams.toneCurve.curve2 = {double(DCT_Linear)};
+        tempParams.toneCurve.curveMode = spot.toneMethod == "two" ? ToneCurveMode::WEIGHTEDSTD
+                                         : spot.toneMethod == "thr" ? ToneCurveMode::LUMINANCE
+                                         : spot.toneMethod == "fou" ? ToneCurveMode::FILMLIKE
+                                         : ToneCurveMode::STD;
+        tempParams.toneCurve.curveMode2 = ToneCurveMode::STD;
+        tempParams.labCurve.lcurve = curvesOn ? spot.llcurve : std::vector<double>{double(DCT_Linear)};
+        tempParams.labCurve.brightness = spot.lightness;
+        tempParams.labCurve.contrast = spot.contrast;
+    }
+
     tempParams.blackwhite.enabled = spot.blwh;
+    tempParams.blackwhite.method = "Perceptual";
+    if (spot.bwMixer.size() >= 8 && spot.bwTone.size() >= 6) {
+        BlackWhiteParams& bw = tempParams.blackwhite;
+        bw.mixerRed = spot.bwMixer[0];
+        bw.mixerOrange = spot.bwMixer[1];
+        bw.mixerYellow = spot.bwMixer[2];
+        bw.mixerGreen = spot.bwMixer[3];
+        bw.mixerCyan = spot.bwMixer[4];
+        bw.mixerBlue = spot.bwMixer[5];
+        bw.mixerPurple = spot.bwMixer[6];
+        bw.mixerMagenta = spot.bwMixer[7];
+        bw.neutrals = spot.bwTone[0];
+        bw.gammaRed = spot.bwTone[1];
+        bw.gammaGreen = spot.bwTone[2];
+        bw.gammaBlue = spot.bwTone[3];
+        bw.tone = spot.bwTone[4];
+        bw.strength = spot.bwTone[5];
+        bw.filter = spot.bwFilter;
+        bw.setting = spot.bwSetting;
+        bw.autoc = false;
+    }
+
+    // The spot's warm and colour grid, shown on the photo's own white
+    // balance and as Colour Grading wheels (the inverse of bridgeColourToSpot;
+    // a tint set earlier reads back as part of the global wheel).
+    if (maskGlobalsValid_) {
+        tempParams.wb = savedWB_;
+        tempParams.colorGrading = savedColorGrading_;
+    }
+    {
+        const double mired0 = 1.0e6 / std::max(1500, tempParams.wb.temperature);
+        const double mired = mired0 - spot.warm / 1.4;
+        tempParams.wb.temperature = static_cast<int>(std::lround(1.0e6 / std::max(20.0, mired)));
+
+        const auto toWheel = [](double a, double b, double& hue, double& sat) {
+            const double r = std::sqrt(a * a + b * b);
+            sat = std::min(1.0, r / (19.7 * 365.0));
+            hue = sat > 0.0 ? std::fmod(std::atan2(b, a) * 180.0 / rtengine::RT_PI + 360.0, 360.0) : 0.0;
+        };
+        const double ga = 0.5 * (spot.labgridALow + spot.labgridAHigh);
+        const double gb = 0.5 * (spot.labgridBLow + spot.labgridBHigh);
+        ColorGradingParams& cg = tempParams.colorGrading;
+        cg = ColorGradingParams();
+        toWheel(ga, gb, cg.globalHue, cg.globalSat);
+        toWheel(spot.labgridALow - ga, spot.labgridBLow - gb, cg.shadowsHue, cg.shadowsSat);
+        toWheel(spot.labgridAHigh - ga, spot.labgridBHigh - gb, cg.highlightsHue, cg.highlightsSat);
+        cg.enabled = cg.globalSat > 0.0 || cg.shadowsSat > 0.0 || cg.highlightsSat > 0.0;
+    }
+
+    // The detail and effects tools that follow a mask, shown with the spot's
+    // values (the inverse of bridgeDetailToSpot; local contrast reads back as
+    // Texture below a 50 px radius, Clarity above).
+    {
+        const bool lc = spot.expcontrast && spot.localcontMethod == "loc" && spot.lcamount > 0.0;
+        const bool fine = spot.lcradius <= 50;
+        tempParams.texture.enabled = lc && fine;
+        tempParams.texture.amount = lc && fine ? spot.lcamount * 100.0 : 0.0;
+        if (lc && fine) {
+            tempParams.texture.radius = spot.lcradius;
+        }
+        tempParams.clarity.enabled = lc && !fine;
+        tempParams.clarity.amount = lc && !fine ? spot.lcamount * 100.0 : 0.0;
+        if (lc && !fine) {
+            tempParams.clarity.radius = spot.lcradius;
+        }
+
+        tempParams.grain.enabled = spot.expblur && spot.strengr > 0;
+        // A spot still on the older grain (colorgr < 0) reads twice as strong.
+        tempParams.grain.strength = spot.colorgr >= 0 ? spot.strengr : std::min(100, spot.strengr * 2);
+        tempParams.grain.color = std::max(0, spot.colorgr);
+        tempParams.grain.iso = spot.isogr;
+        tempParams.grain.scale = spot.scalegr;
+
+        tempParams.dehaze.enabled = spot.expreti && spot.dehaz != 0;
+        tempParams.dehaze.strength = spot.dehaz;
+        tempParams.dehaze.depth = spot.depth;
+        tempParams.dehaze.saturation = static_cast<int>(std::lround(spot.dehazeSaturation));
+
+    }
 
     ipc->endUpdateParams(0);  // release lock, no reprocess
 
@@ -1739,6 +2245,22 @@ void ToolPanelCoordinator::loadSpotIntoGlobalTools()
     blackwhite->disableListener();
     blackwhite->read(&tempParams);
     blackwhite->enableListener();
+
+    whitebalance->disableListener();
+    whitebalance->read(&tempParams);
+    whitebalance->enableListener();
+
+    colorgrading->disableListener();
+    colorgrading->read(&tempParams);
+    colorgrading->enableListener();
+
+    for (ToolPanel* panel : std::initializer_list<ToolPanel*>{lcurve, texture, clarity, grain, dehaze}) {
+        if (panel) {
+            panel->disableListener();
+            panel->read(&tempParams);
+            panel->enableListener();
+        }
+    }
 }
 
 void ToolPanelCoordinator::resetEditGroupsToDefault()
@@ -1879,10 +2401,12 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                 savedSH_ = p->sh;
                 savedBlackWhite_ = p->blackwhite;
                 savedLabCurve_ = p->labCurve;
+                saveColourMaskGlobals(*p);
                 maskGlobalsValid_ = true;
                 ipc->endUpdateParams(0);
             }
             maskModeActive_ = true;
+            setGlobalOnlyToolsSensitive(false);
 
             // Fire mask visibility so the engine shows the overlay
             if (ipc) {
@@ -1902,6 +2426,7 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
         if (prevMode == EditorMode::MASK && mode != EditorMode::MASK) {
             // Restore original global params and re-read tools
             maskModeActive_ = false;
+            setGlobalOnlyToolsSensitive(true);
             if (ipc) {
                 ProcParams* p = ipc->beginUpdateParams();
 
@@ -1915,6 +2440,7 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                     p->sh = savedSH_;
                     p->blackwhite = savedBlackWhite_;
                     p->labCurve = savedLabCurve_;
+                    restoreColourMaskGlobals(*p);
                 }
 
                 ipc->endUpdateParams(rtengine::RefreshMapper::getInstance()->getAction(
@@ -1940,6 +2466,15 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                 blackwhite->disableListener();
                 blackwhite->read(&restored);
                 blackwhite->enableListener();
+                for (ToolPanel* panel : std::initializer_list<ToolPanel*>{
+                         whitebalance, colorgrading, hsvequalizer, pointcolor, rgbcurves,
+                         lcurve, texture, clarity, grain, dehaze}) {
+                    if (panel) {
+                        panel->disableListener();
+                        panel->read(&restored);
+                        panel->enableListener();
+                    }
+                }
             }
 
             toolBar->blockEditDeactivation(false);
@@ -3022,6 +3557,7 @@ void ToolPanelCoordinator::refreshMaskModeGlobals(const ProcParams* params)
     savedSH_ = params->sh;
     savedBlackWhite_ = params->blackwhite;
     savedLabCurve_ = params->labCurve;
+    saveColourMaskGlobals(*params);
     maskGlobalsValid_ = true;
 }
 
@@ -3085,6 +3621,7 @@ void ToolPanelCoordinator::turnOffMaskOverlay(bool force)
         params->sh = savedSH_;
         params->blackwhite = savedBlackWhite_;
         params->labCurve = savedLabCurve_;
+        restoreColourMaskGlobals(*params);
     }
     // TONE reaches the local-adjustment stage that draws the overlay. AUTOEXP
     // also redid spot removal and the HDR stage on every hover on and off.
@@ -3156,6 +3693,7 @@ void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw, int sp
             params->sh = savedSH_;
             params->blackwhite = savedBlackWhite_;
             params->labCurve = savedLabCurve_;
+            restoreColourMaskGlobals(*params);
         }
         if (spotIndex >= 0 && spotIndex < static_cast<int>(params->locallab.spots.size())) {
             params->locallab.selspot = spotIndex;
@@ -4114,7 +4652,36 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
     // it the bridge never saw EvLBrightness, EvLContrast or EvLLCurve, so
     // those controls were written to the globals, reverted by the mask-mode
     // restore, and appeared to do nothing at all on the mask pane.
-    if ((changeFlags & (M_AUTOEXP | M_RGBCURVE | M_LUMACURVE | M_CROP))
+    // White balance and Colour Grading carry other refresh flags but are
+    // bridged on the Mask pane too; once bridged, the globals they touched are
+    // put back below, so the pass only needs the local-adjustment stage.
+    const int eventId = event;
+    const bool colourBridgeEvent = maskModeActive_
+        && (eventId == rtengine::EvWBTemp || eventId == rtengine::EvWBGreen || eventId == rtengine::EvWBMethod
+            || eventId == EvPreviewStripColor || eventId == rtengine::EvColorGradingShadows
+            || eventId == rtengine::EvColorGradingMidtones || eventId == rtengine::EvColorGradingHighlights
+            || eventId == rtengine::EvColorGradingGlobal || eventId == rtengine::EvColorGradingEnabled
+            // Sharpening refreshes with M_LUMINANCE|M_COLOR, which the flag
+            // gate below never let through, so its bridge could not run.
+            || eventId == rtengine::EvShrAmount || eventId == rtengine::EvShrRadius
+            || eventId == rtengine::EvShrEnabled || eventId == rtengine::EvShrThresh
+            || eventId == rtengine::EvShrMethod || eventId == rtengine::EvShrDRadius
+            || eventId == rtengine::EvShrDAmount || eventId == rtengine::EvShrDDamping
+            || eventId == rtengine::EvShrDIterations
+            || eventId == rtengine::EvSHEnabled || eventId == rtengine::EvSHRadius
+            || eventId == rtengine::EvSHHLTonalW || eventId == rtengine::EvSHSHTonalW
+            || eventId == rtengine::EvVibranceEnabled || eventId == rtengine::EvVibranceProtectSkins
+            || eventId == rtengine::EvVibranceAvoidColorShift || eventId == rtengine::EvVibrancePastSatTog
+            || eventId == rtengine::EvVibrancePastSatThreshold
+            || isDetailBridgeEvent(eventId)
+            || isBWBridgeEvent(eventId)
+            || eventId == rtengine::EvToneCurve1 || eventId == rtengine::EvToneCurve2
+            || eventId == rtengine::EvToneCurveMode1 || eventId == rtengine::EvToneCurveMode2
+            || eventId == rtengine::EvLLCurve
+            || (eventId == rtengine::EvProfileChanged && !pendingMaskGroupReset_.empty()));
+    if (colourBridgeEvent && bridgeGlobalToSpot(params, event)) {
+        changeFlags = M_AUTOEXP;
+    } else if ((changeFlags & (M_AUTOEXP | M_RGBCURVE | M_LUMACURVE | M_CROP))
             && bridgeGlobalToSpot(params, event)) {
         // Ensure locallab runs. For most bridgeable events (EvExpComp etc.),
         // M_AUTOEXP is already in changeFlags — this is a no-op OR.
@@ -4132,6 +4699,7 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
         params->sh = savedSH_;
         params->blackwhite = savedBlackWhite_;
         params->labCurve = savedLabCurve_;
+        restoreColourMaskGlobals(*params);
     }
 
     // Compensate rotation on flip
@@ -5772,41 +6340,25 @@ void ToolPanelCoordinator::resetGroupToNeutral(
         strip->resetScrubber();
     }
 
-    // On the Mask pane the tool widgets show a spot's values, so panelChanged
-    // stamps the photograph's real globals back over whatever they wrote. That
-    // restore does not know a reset from an accident, and it swallowed the
-    // group's reset whole: the sliders went to zero and the picture did not
-    // move. Reset the stashed globals alongside the widgets.
+    // On the Mask pane the widgets show the selected mask's values, so the
+    // group's reset X resets that mask. It used to neutralise the photo's
+    // stashed globals instead: one click on the Mask pane wiped the whole
+    // photo's grade while the mask kept its own values. The bridge applies
+    // it, after the tools write, so nothing stale lands on top.
     if (maskModeActive_) {
-        // Fill the stash from the engine first when it is empty, or
-        // panelChanged's own refresh runs after this and re-reads the very
-        // values being cleared. It is empty on the first change after a photo
-        // is opened on the Mask pane, which is exactly when a reset is likely.
         if (!maskGlobalsValid_ && ipc) {
             ProcParams live;
             ipc->getParams(&live);
             refreshMaskModeGlobals(&live);
         }
-
-        for (ToolPanel* panel : panels) {
-            if (panel == toneCurve) {
-                savedToneCurve_ = neutral.toneCurve;
-            } else if (panel == shadowshighlights) {
-                savedSH_ = neutral.sh;
-            } else if (panel == vibrance) {
-                savedVibrance_ = neutral.vibrance;
-            } else if (panel == sharpening) {
-                savedSharpening_ = neutral.sharpening;
-            } else if (panel == blackwhite) {
-                savedBlackWhite_ = neutral.blackwhite;
-            }
-        }
+        pendingMaskGroupReset_.assign(panels.begin(), panels.end());
     }
 
     // panelChanged re-reads every panel and settles the group's X itself. If
     // some part of the group did not actually come back, the X stays lit and
     // says so, rather than being hidden by hand while the edit is still there.
     panelChanged(rtengine::EvProfileChanged, M("GENERAL_CHANGED"));
+    pendingMaskGroupReset_.clear();    // never left for a later profile load
 }
 
 void ToolPanelCoordinator::captureNeutralReference()

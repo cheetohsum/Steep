@@ -1107,6 +1107,7 @@ void Crop::update(int todo)
 
         if (sizeChanged) {
             delete transCrop;
+            transCrop = nullptr;    // never dangling if the new throws
             transCrop = new Imagefloat(cropw, croph);
             transCropValid = false;
         }
@@ -2760,7 +2761,13 @@ bool Crop::setCropSizes(const int cropX, const int cropY, const int cropW, const
     }
 
     if (cw != cropw || ch != croph || orW != trafw || orH != trafh) {
-
+      // Out of memory part way through used to leave laboCrop / labnCrop
+      // pointing at freed buffers with the new size already recorded, so the
+      // next pass skipped this block and copied from freed memory (crash
+      // 2026-11-23 in LabImage::CopyFrom after a preview OOM). Null each
+      // buffer as it goes, forget the size so the next pass reallocates,
+      // and never leave cropMutex locked.
+      try {
         cropw = cw;
         croph = ch;
         trafw = orW;
@@ -2781,6 +2788,7 @@ bool Crop::setCropSizes(const int cropX, const int cropY, const int cropW, const
 
         if (laboCrop) {
             delete laboCrop;    // laboCrop can't be resized
+            laboCrop = nullptr;
         }
 
         laboCrop = new LabImage(cropw, croph);
@@ -2789,6 +2797,7 @@ bool Crop::setCropSizes(const int cropX, const int cropY, const int cropW, const
 
         if (labnCrop) {
             delete labnCrop;    // labnCrop can't be resized
+            labnCrop = nullptr;
         }
 
         labnCrop = new LabImage(cropw, croph);
@@ -2807,10 +2816,12 @@ bool Crop::setCropSizes(const int cropX, const int cropY, const int cropW, const
 
         if (shbuffer) {
             delete [] shbuffer;
+            shbuffer = nullptr;
         }
 
         if (shbuf_real) {
             delete [] shbuf_real;
+            shbuf_real = nullptr;
         }
 
         shbuffer = new float*[croph];
@@ -2827,6 +2838,14 @@ bool Crop::setCropSizes(const int cropX, const int cropY, const int cropW, const
         }
 
         cropAllocated = true;
+      } catch (...) {
+        cropw = croph = trafw = trafh = -1;
+        cropAllocated = false;
+        if (!internal) {
+            cropMutex.unlock();
+        }
+        throw;
+      }
 
         changed = true;
     }

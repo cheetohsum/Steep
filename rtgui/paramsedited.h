@@ -563,6 +563,10 @@ public:
         bool activ;
         bool avoidneg;
         bool blwh;
+        bool bwMixer;
+        bool bwTone;
+        bool bwFilter;
+        bool bwSetting;
         bool recurs;
         bool laplac;
         bool deltae;
@@ -824,6 +828,8 @@ public:
         bool decayd;
         bool isogr;
         bool strengr;
+        bool colorgr;
+        bool rgbcurveGamma;
         bool scalegr;
         bool divgr;
         bool epsbl;
