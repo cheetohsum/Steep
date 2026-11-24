@@ -10097,6 +10097,13 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
 
 #ifdef RT_AI_MASKING
                 const bool aiMaskActive = aiMaskPtr && aiFullW > 0 && aiFullH > 0;
+                // An AI-masked spot with no maps (analysis failed or the
+                // models are missing) edits nothing: falling back to the
+                // geometric shape, whose bounds were widened to the frame,
+                // applied the edit to the whole photo. Add mode keeps its shape.
+                if (lp.useaimask && !aiMaskActive && lp.aimaskshapeop != 1) {
+                    continue;
+                }
                 float aiMaskValue = 0.f;
                 if (aiMaskActive) {
                     aiMaskValue = masksampling::atPixel(*aiMaskPtr, aiMaskW, aiMaskH,
@@ -15898,12 +15905,12 @@ void ImProcFunctions::Lab_Local(
             // An empty mask has no visible edit; retain only the minimum work
             // area. In add mode the shape still edits, so its bounds stand.
             lp.lxL = lp.lx = lp.lyT = lp.ly = 4.f;
-        } else if (!aiBounds) {
-            // Preserve correctness while segmentation is still becoming available.
-            lp.lxL = std::max(lp.xc, 1.f);
-            lp.lx  = std::max(static_cast<float>(oW) - lp.xc, 1.f);
-            lp.lyT = std::max(lp.yc, 1.f);
-            lp.ly  = std::max(static_cast<float>(oH) - lp.yc, 1.f);
+        } else if (!aiBounds && lp.aimaskshapeop != 1) {
+            // No maps at all (analysis failed, models missing): the spot edits
+            // nothing until they exist, exactly like the pending placeholder.
+            // This used to widen the work area to the whole frame, and with no
+            // AI weight to confine it the edit landed on the entire photo.
+            lp.lxL = lp.lx = lp.lyT = lp.ly = 4.f;
         }
     }
 #endif
@@ -24052,6 +24059,13 @@ void ImProcFunctions::Lab_Local(
 
                 float factorx = localFactor;
 #ifdef RT_AI_MASKING
+                // An AI-masked spot with no maps (analysis failed or the
+                // models are missing) edits nothing: falling back to the
+                // geometric shape, whose bounds were widened to the frame,
+                // applied the edit to the whole photo. Add mode keeps its shape.
+                if (lp.useaimask && !(aiMaskPtrOv && aiFullWOv > 0 && aiFullHOv > 0) && lp.aimaskshapeop != 1) {
+                    continue;
+                }
                 if (aiMaskPtrOv && aiFullWOv > 0 && aiFullHOv > 0) {
                     const float aiVal = masksampling::atPixel(*aiMaskPtrOv, aiMaskWOv, aiMaskHOv,
                         double(lox) * sk, double(loy) * sk, aiFullWOv, aiFullHOv, sk);
@@ -24216,6 +24230,13 @@ void ImProcFunctions::Lab_Local(
 
                 float factorx = localFactor;
 #ifdef RT_AI_MASKING
+                // An AI-masked spot with no maps (analysis failed or the
+                // models are missing) edits nothing: falling back to the
+                // geometric shape, whose bounds were widened to the frame,
+                // applied the edit to the whole photo. Add mode keeps its shape.
+                if (lp.useaimask && !(aiDbPtr && aiDbFullW > 0 && aiDbFullH > 0) && lp.aimaskshapeop != 1) {
+                    continue;
+                }
                 if (aiDbPtr && aiDbFullW > 0 && aiDbFullH > 0) {
                     const float aiVal = masksampling::atPixel(*aiDbPtr, aiDbW, aiDbH,
                         double(lox) * sk, double(loy) * sk, aiDbFullW, aiDbFullH, sk);
