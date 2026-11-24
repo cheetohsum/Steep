@@ -152,6 +152,12 @@ private:
     std::atomic<int> previewGeneration_{0};
     void refreshFolderPreviews ();
 
+    // Preview strips fading in, by folder: when each one arrived (monotonic
+    // us). One frame-clock tick redraws the tree while any are in flight.
+    std::map<Glib::ustring, gint64> stripFadeStart_;
+    guint stripFadeTick_ = 0;
+    void startStripFade (const Glib::ustring& dirname);
+
     // The directory currently open in the catalog. The tree uses hover
     // selection, so the GTK selection follows the pointer and is dropped when
     // it leaves the tree; the open folder has to be tracked separately and

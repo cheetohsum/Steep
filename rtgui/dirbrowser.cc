@@ -399,6 +399,13 @@ public:
     int scale = 1;
     int tile = 24;                      // logical px, square
     Gdk::RGBA placeholderInk;
+    // Milliseconds since this row's strip arrived while it is still fading
+    // in (DirBrowser::stripFadeStart_), or -1 to draw it settled.
+    double fadeElapsedMs = -1;
+    static constexpr double kFadeMs = 240;        // motion::Duration::Large
+    static constexpr double kFadeStaggerMs = 45;  // per tile, left to right
+    static constexpr double kFadeRise = 3;        // logical px the tile settles
+    static double fadeTotalMs(int tiles) { return kFadeMs + std::max(0, tiles - 1) * kFadeStaggerMs; }
 
     int visibleRight = 0;               // right edge of the visible tree, tree px
     // Height of the name band (the shared sidebar row height). Never set a
@@ -544,7 +551,33 @@ protected:
                       std::max(0, visibleRight - background_area.get_x()), background_area.get_height());
         cr->clip();
 
-        if (strip) {
+        if (strip && fadeElapsedMs >= 0) {
+            // Arriving: each tile fades in over its grey placeholder and
+            // settles up a few px, a beat after the one to its left.
+            const int stripTiles = std::max(1, (strip->get_width() / scale + kGap) / (tile + kGap));
+            for (int i = 0; i < std::max(slots, stripTiles); ++i) {
+                const double x = x0 + i * (tile + kGap);
+                const double t = (fadeElapsedMs - i * kFadeStaggerMs) / kFadeMs;
+                const double shown = steep::motion::ease(steep::motion::Ease::Enter, t);
+                if (shown < 1.0) {
+                    cr->set_source_rgba(placeholderInk.get_red(), placeholderInk.get_green(),
+                                        placeholderInk.get_blue(), 0.08 * (1.0 - shown));
+                    roundedRect(cr, x, y0, tile, tile, 3.0);
+                    cr->fill();
+                }
+                if (shown <= 0.0 || i >= stripTiles) {
+                    continue;
+                }
+                cr->save();
+                cr->rectangle(x, y0 - kFadeRise, tile, tile + kFadeRise);
+                cr->clip();
+                cr->translate(x0, y0 + kFadeRise * (1.0 - shown));
+                cr->scale(1.0 / scale, 1.0 / scale);
+                Gdk::Cairo::set_source_pixbuf(cr, strip, 0, 0);
+                cr->paint_with_alpha(shown);
+                cr->restore();
+            }
+        } else if (strip) {
             cr->translate(x0, y0);
             cr->scale(1.0 / scale, 1.0 / scale);
             Gdk::Cairo::set_source_pixbuf(cr, strip, 0, 0);
@@ -927,6 +960,13 @@ void DirBrowser::fillDirTree ()
         const bool previews = iter && App::get().options().folderPreviews;
         textCR->slots = previews ? iter->get_value(dtColumns.previewSlots) : 0;
         textCR->strip = previews ? iter->get_value(dtColumns.previewStrip) : Glib::RefPtr<Gdk::Pixbuf>();
+        textCR->fadeElapsedMs = -1;
+        if (textCR->strip && !stripFadeStart_.empty()) {
+            const auto fade = stripFadeStart_.find(iter->get_value(dtColumns.dirname));
+            if (fade != stripFadeStart_.end()) {
+                textCR->fadeElapsedMs = (g_get_monotonic_time() - fade->second) / 1000.0;
+            }
+        }
         textCR->scale = std::max(1, dirtree->get_scale_factor());
         textCR->tile = FolderNameRenderer::tileFor(App::get().options().folderPreviewSize);
         const auto hadj = scrolledwindow4->get_hadjustment();
@@ -2212,6 +2252,11 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent, 
                     try {
                         auto iter = self->rowFor(pathStr, dirname);
                         if (iter) {
+                            // Only a row that had no picture yet fades in; a
+                            // rebuilt strip replacing a shown one just swaps.
+                            if (!iter->get_value(self->dtColumns.previewStrip)) {
+                                self->startStripFade(dirname);
+                            }
                             (*iter)[self->dtColumns.previewStrip] = strip;
                         }
                     } catch (...) {}
@@ -2219,6 +2264,32 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent, 
             }
         });
         }
+    });
+}
+
+void DirBrowser::startStripFade (const Glib::ustring& dirname)
+{
+    if (steep::motion::reduceMotion() || !dirtree || !dirtree->get_mapped()) {
+        return;
+    }
+    stripFadeStart_[dirname] = g_get_monotonic_time();
+    if (stripFadeTick_) {
+        return;
+    }
+    stripFadeTick_ = dirtree->add_tick_callback([this](const Glib::RefPtr<Gdk::FrameClock>&) -> bool {
+        const gint64 now = g_get_monotonic_time();
+        // Generous tile count: the strip can hold more photos than the
+        // setting when the sidebar is wide, and pruning early would snap.
+        const double doneMs = FolderNameRenderer::fadeTotalMs(16);
+        for (auto it = stripFadeStart_.begin(); it != stripFadeStart_.end();) {
+            it = (now - it->second) / 1000.0 > doneMs ? stripFadeStart_.erase(it) : std::next(it);
+        }
+        dirtree->queue_draw();
+        if (stripFadeStart_.empty()) {
+            stripFadeTick_ = 0;
+            return false;
+        }
+        return true;
     });
 }
 
