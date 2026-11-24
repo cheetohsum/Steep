@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <sstream>
 
 #include "rtengine/rt_math.h"
 
@@ -2599,10 +2600,14 @@ void DirBrowser::showPreviewMenu (GdkEventButton* event)
 struct DirBrowser::StatsJob {
     Glib::ustring dirname;
     Glib::ustring pathStr;
-    std::vector<std::string> files;
+    std::vector<std::string> files;     // full paths
     size_t next = 0;
     bool listed = false;
     FolderStats stats;
+    bool force = false;                 // a flag changed in the app: always recount
+    std::uint64_t knownSignature = 0;   // from the persisted stats, 0 = none
+    Glib::ustring knownEncoded;
+    std::uint64_t signature = 0;        // this listing's, 0 = could not sign
 };
 
 namespace
@@ -2689,8 +2694,73 @@ void DirBrowser::onTreeWidthChanged ()
     }, 350);
 }
 
+void DirBrowser::loadPersistedStats ()
+{
+    if (persistedStatsLoaded_) {
+        return;
+    }
+    persistedStatsLoaded_ = true;
+
+    const std::string path = Glib::build_filename(App::get().options().cacheBaseDir, "folderstats.tsv");
+    gchar* raw = nullptr;
+    gsize length = 0;
+    if (!g_file_get_contents(path.c_str(), &raw, &length, nullptr)) {
+        return;
+    }
+    // One folder per line: signature (hex) TAB encoded stats TAB folder.
+    std::istringstream in(std::string(raw, length));
+    g_free(raw);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        const auto t1 = line.find('\t');
+        const auto t2 = t1 == std::string::npos ? std::string::npos : line.find('\t', t1 + 1);
+        if (t2 == std::string::npos || t2 + 1 >= line.size()) {
+            continue;
+        }
+        PersistedStats p;
+        try {
+            p.signature = std::stoull(line.substr(0, t1), nullptr, 16);
+        } catch (...) {
+            continue;
+        }
+        p.encoded = line.substr(t1 + 1, t2 - t1 - 1);
+        if (p.signature && g_utf8_validate(p.encoded.c_str(), -1, nullptr)) {
+            persistedStats_[line.substr(t2 + 1)] = std::move(p);
+        }
+    }
+}
+
+void DirBrowser::schedulePersistStats ()
+{
+    persistStatsConn_.disconnect();
+    persistStatsConn_ = Glib::signal_timeout().connect([this]() -> bool {
+        std::string out;
+        for (const auto& p : persistedStats_) {
+            char sig[24];
+            std::snprintf(sig, sizeof(sig), "%llx", static_cast<unsigned long long>(p.second.signature));
+            out += sig;
+            out += '\t';
+            out += p.second.encoded.raw();
+            out += '\t';
+            out += p.first;
+            out += '\n';
+        }
+        const std::string path = Glib::build_filename(App::get().options().cacheBaseDir, "folderstats.tsv");
+        steep::runBackground([path, out]() {
+            g_mkdir_with_parents(Glib::path_get_dirname(path).c_str(), 0755);
+            g_file_set_contents(path.c_str(), out.data(), static_cast<gssize>(out.size()), nullptr);
+        });
+        return false;
+    }, 2000);
+}
+
 void DirBrowser::scanFolderStats (std::vector<ScanEntry> entries, bool force)
 {
+    loadPersistedStats();
+
     for (auto& entry : entries) {
         const std::string key = entry.dirname.raw();
 
@@ -2705,6 +2775,16 @@ void DirBrowser::scanFolderStats (std::vector<ScanEntry> entries, bool force)
             }
         }
 
+        // Last launch's numbers go up straight away; the scan below confirms
+        // them (one folder listing when nothing changed) or replaces them.
+        const auto persisted = persistedStats_.find(key);
+        if (!force && persisted != persistedStats_.end()) {
+            auto iter = rowFor(entry.pathStr, entry.dirname);
+            if (iter && iter->get_value(dtColumns.flagStats).empty()) {
+                (*iter)[dtColumns.flagStats] = persisted->second.encoded;
+            }
+        }
+
         if (statsInFlight_.count(key)) {
             if (force) {
                 statsRedo_.insert(key);
@@ -2716,38 +2796,54 @@ void DirBrowser::scanFolderStats (std::vector<ScanEntry> entries, bool force)
         auto job = std::make_shared<StatsJob>();
         job->dirname = entry.dirname;
         job->pathStr = entry.pathStr;
+        job->force = force;
+        if (persisted != persistedStats_.end()) {
+            job->knownSignature = persisted->second.signature;
+            job->knownEncoded = persisted->second.encoded;
+        }
         statsQueue().enqueue([this, job]() { runStatsChunk(job); });
     }
 }
 
-// Worker side: one chunk, then back to the end of the queue.
+// Worker side: one chunk, then back to the end of the queue. Whatever
+// happens, a job ends in the idle below: SerialQueue swallows exceptions, and
+// a job that never finished left its folder "in flight" for the rest of the
+// session, so it was never counted again and showed no chips.
 void DirBrowser::runStatsChunk (std::shared_ptr<StatsJob> job)
 {
-    if (!job->listed) {
-        job->listed = true;
-        try {
-            Glib::Dir dir(job->dirname);
-            const auto& exts = App::get().options().parsedExtensionsSet;
-            for (auto it = dir.begin(); it != dir.end(); ++it) {
-                const Glib::ustring fname = *it;
-                const auto dotpos = fname.find_last_of('.');
-                if (dotpos == Glib::ustring::npos) {
-                    continue;
-                }
-                const Glib::ustring ext = fname.substr(dotpos + 1).lowercase();
-                if (exts.count(ext.raw())) {
-                    job->files.push_back(fname.raw());
+    bool done = false;
+    try {
+        if (!job->listed) {
+            job->listed = true;
+            std::vector<Glib::ustring> files, subdirs;
+            std::uint64_t signature = 0;
+            if (imagescan::listImageFilesStamped(job->dirname, files, subdirs, signature)) {
+                job->signature = signature;
+                for (const auto& f : files) {
+                    job->files.push_back(f.raw());
                 }
             }
-        } catch (...) {}
+            // Nothing changed since the persisted count (and no flag was
+            // set in the app, which may only touch the data cache): reuse it.
+            if (!job->force && job->signature != 0 && job->signature == job->knownSignature) {
+                job->stats = FolderStats::decode(job->knownEncoded);
+                job->next = job->files.size();
+            }
+        }
+
+        const size_t end = std::min(job->files.size(), job->next + kStatsChunk);
+        for (; job->next < end; ++job->next) {
+            try {
+                accumulateFileFlags(job->files[job->next], job->stats);
+            } catch (...) {}
+        }
+        done = job->next >= job->files.size();
+    } catch (...) {
+        done = true;
+        job->signature = 0;     // incomplete: show it, never persist it
     }
 
-    const size_t end = std::min(job->files.size(), job->next + kStatsChunk);
-    for (; job->next < end; ++job->next) {
-        accumulateFileFlags(Glib::build_filename(job->dirname.raw(), job->files[job->next]), job->stats);
-    }
-
-    if (job->next < job->files.size()) {
+    if (!done) {
         statsQueue().enqueue([this, job]() { runStatsChunk(job); });
         return;
     }
@@ -2758,6 +2854,14 @@ void DirBrowser::runStatsChunk (std::shared_ptr<StatsJob> job)
         const Glib::ustring encoded = job->stats.encode();
         self->statsCache_[key] = encoded;
         self->statsInFlight_.erase(key);
+        if (job->signature != 0) {
+            auto& p = self->persistedStats_[key];
+            if (p.signature != job->signature || p.encoded != encoded) {
+                p.signature = job->signature;
+                p.encoded = encoded;
+                self->schedulePersistStats();
+            }
+        }
 
         auto iter = self->rowFor(job->pathStr, job->dirname);
         if (iter && iter->get_value(self->dtColumns.flagStats) != encoded) {

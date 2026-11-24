@@ -138,6 +138,19 @@ private:
     struct StatsJob;
     void runStatsChunk (std::shared_ptr<StatsJob> job);
     std::map<std::string, Glib::ustring> statsCache_;   // dir -> encoded stats (GUI thread)
+    // Last known stats per folder across launches (cache/folderstats.tsv),
+    // with the folder signature they were counted under: shown at once on
+    // the next launch, and a folder whose signature still matches is not
+    // read photo by photo again.
+    struct PersistedStats {
+        std::uint64_t signature = 0;
+        Glib::ustring encoded;
+    };
+    std::map<std::string, PersistedStats> persistedStats_;
+    bool persistedStatsLoaded_ = false;
+    sigc::connection persistStatsConn_;
+    void loadPersistedStats ();
+    void schedulePersistStats ();
     std::set<std::string> statsInFlight_;
     std::set<std::string> statsRedo_;
     bool statsChipAt (int bx, int by, Gtk::TreeModel::Path* pathOut, int* chipOut, Gdk::Rectangle* rectOut);
