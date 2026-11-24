@@ -1621,9 +1621,11 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         bridged = true;
     }
 
-    if (id == EvVibrancePastels || id == EvVibranceSaturated) {
-        spot.saturated = params->vibrance.saturated;
-        spot.pastels = params->vibrance.pastels;
+    if (id == EvVibrancePastels || id == EvVibranceSaturated || id == EvVibranceEnabled
+            || id == EvVibranceProtectSkins || id == EvVibranceAvoidColorShift
+            || id == EvVibrancePastSatTog || id == EvVibrancePastSatThreshold) {
+        spot.saturated = params->vibrance.enabled ? params->vibrance.saturated : 0;
+        spot.pastels = params->vibrance.enabled ? params->vibrance.pastels : 0;
         spot.psthreshold = params->vibrance.psthreshold;
         spot.protectskins = params->vibrance.protectskins;
         spot.avoidcolorshift = params->vibrance.avoidcolorshift;
@@ -1635,8 +1637,13 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         bridged = true;
     }
 
-    if (id == EvShrAmount || id == EvShrRadius) {
-        spot.sharamount = params->sharpening.amount;
+    // Every sharpening control, not just amount and radius (and none of them
+    // reached this bridge before -- see the gate in panelChanged), so the
+    // whole tool looked dead on the Mask pane.
+    if (id == EvShrAmount || id == EvShrRadius || id == EvShrEnabled || id == EvShrThresh
+            || id == EvShrMethod || id == EvShrDRadius || id == EvShrDAmount
+            || id == EvShrDDamping || id == EvShrDIterations) {
+        spot.sharamount = params->sharpening.enabled ? params->sharpening.amount : 0;
         spot.sharradius = params->sharpening.radius;
         spot.sharcontrast = static_cast<int>(params->sharpening.contrast);
         if (spot.sharamount != 0) {
@@ -1646,15 +1653,65 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         bridged = true;
     }
 
-    if (id == EvSHHighlights || id == EvSHShadows) {
-        spot.highlights = params->sh.highlights;
-        spot.shadows = params->sh.shadows;
+    if (id == EvSHHighlights || id == EvSHShadows || id == EvSHEnabled || id == EvSHRadius
+            || id == EvSHHLTonalW || id == EvSHSHTonalW) {
+        spot.highlights = params->sh.enabled ? params->sh.highlights : 0;
+        spot.shadows = params->sh.enabled ? params->sh.shadows : 0;
+        spot.sh_radius = params->sh.radius;
         spot.h_tonalwidth = params->sh.htonalwidth;
         spot.s_tonalwidth = params->sh.stonalwidth;
         if (spot.highlights != 0 || spot.shadows != 0) {
             spot.expshadhigh = true;
             spot.visishadhigh = true;
         }
+        bridged = true;
+    }
+
+    if (id == EvProfileChanged && !pendingMaskGroupReset_.empty()) {
+        const rtengine::procparams::LocallabParams::LocallabSpot def;
+        for (ToolPanel* panel : pendingMaskGroupReset_) {
+            if (panel == toneCurve) {
+                spot.expcomp = def.expcomp;
+                spot.black = def.black;
+                spot.hlcompr = def.hlcompr;
+                spot.hlcomprthresh = def.hlcomprthresh;
+                spot.shcompr = def.shcompr;
+                spot.lightness = def.lightness;
+                spot.contrast = def.contrast;
+                spot.chroma = def.chroma;
+                spot.rgbcurve = def.rgbcurve;
+            } else if (panel == shadowshighlights) {
+                spot.highlights = def.highlights;
+                spot.shadows = def.shadows;
+                spot.h_tonalwidth = def.h_tonalwidth;
+                spot.s_tonalwidth = def.s_tonalwidth;
+                spot.sh_radius = def.sh_radius;
+            } else if (panel == vibrance) {
+                spot.saturated = def.saturated;
+                spot.pastels = def.pastels;
+                spot.psthreshold = def.psthreshold;
+                spot.protectskins = def.protectskins;
+                spot.avoidcolorshift = def.avoidcolorshift;
+                spot.pastsattog = def.pastsattog;
+            } else if (panel == sharpening) {
+                spot.sharamount = def.sharamount;
+                spot.sharradius = def.sharradius;
+                spot.sharcontrast = def.sharcontrast;
+            } else if (panel == blackwhite) {
+                spot.blwh = def.blwh;
+                locallab->setSelectedSpotBW(spot.blwh);
+            } else if (panel == whitebalance) {
+                spot.warm = def.warm;
+            } else if (panel == colorgrading) {
+                spot.labgridALow = def.labgridALow;
+                spot.labgridBLow = def.labgridBLow;
+                spot.labgridAHigh = def.labgridAHigh;
+                spot.labgridBHigh = def.labgridBHigh;
+            } else if (panel == lcurve) {
+                spot.llcurve = def.llcurve;
+            }
+        }
+        pendingMaskGroupReset_.clear();
         bridged = true;
     }
 
@@ -1802,16 +1859,32 @@ void ToolPanelCoordinator::restoreColourMaskGlobals(ProcParams& params) const
     params.rgbCurves = savedRGBCurves_;
 }
 
-void ToolPanelCoordinator::setGlobalOnlyColourToolsSensitive(bool sensitive)
+void ToolPanelCoordinator::setGlobalOnlyToolsSensitive(bool sensitive)
 {
     // No per-spot form exists for these, so on the Mask pane they could only
     // ever recolour the whole photo. Greyed out there, with the reason.
     const Glib::ustring why = sensitive ? Glib::ustring() : M("MASK_GLOBAL_ONLY_TOOL_TOOLTIP");
-    for (ToolPanel* panel : std::initializer_list<ToolPanel*>{hsvequalizer, pointcolor, rgbcurves}) {
+    for (ToolPanel* panel : std::initializer_list<ToolPanel*>{
+             hsvequalizer, pointcolor, rgbcurves, dirpyrdenoise, dehaze, aidenoise, preprocess}) {
         auto* foldable = dynamic_cast<FoldableToolPanel*>(panel);
         if (foldable && foldable->getExpander()) {
             foldable->getExpander()->set_sensitive(sensitive);
             foldable->getExpander()->set_tooltip_text(why);
+        }
+    }
+    // Whole groups with nothing that follows a mask (grain, light effects,
+    // vignette, tilt-shift, Film Lab, double exposure; lens corrections),
+    // and the strips that drive them.
+    for (Gtk::Widget* w : std::initializer_list<Gtk::Widget*>{effectsGroup, calibrationGroup}) {
+        if (w) {
+            w->set_sensitive(sensitive);
+            w->set_tooltip_text(why);
+        }
+    }
+    for (PreviewStrip* strip : {detailStrip_, effectsStrip_}) {
+        if (strip) {
+            strip->set_sensitive(sensitive);
+            strip->set_tooltip_text(why);
         }
     }
 }
@@ -2065,7 +2138,7 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                 ipc->endUpdateParams(0);
             }
             maskModeActive_ = true;
-            setGlobalOnlyColourToolsSensitive(false);
+            setGlobalOnlyToolsSensitive(false);
 
             // Fire mask visibility so the engine shows the overlay
             if (ipc) {
@@ -2085,7 +2158,7 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
         if (prevMode == EditorMode::MASK && mode != EditorMode::MASK) {
             // Restore original global params and re-read tools
             maskModeActive_ = false;
-            setGlobalOnlyColourToolsSensitive(true);
+            setGlobalOnlyToolsSensitive(true);
             if (ipc) {
                 ProcParams* p = ipc->beginUpdateParams();
 
@@ -4318,7 +4391,20 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
         && (eventId == rtengine::EvWBTemp || eventId == rtengine::EvWBGreen || eventId == rtengine::EvWBMethod
             || eventId == EvPreviewStripColor || eventId == rtengine::EvColorGradingShadows
             || eventId == rtengine::EvColorGradingMidtones || eventId == rtengine::EvColorGradingHighlights
-            || eventId == rtengine::EvColorGradingGlobal || eventId == rtengine::EvColorGradingEnabled);
+            || eventId == rtengine::EvColorGradingGlobal || eventId == rtengine::EvColorGradingEnabled
+            // Sharpening refreshes with M_LUMINANCE|M_COLOR, which the flag
+            // gate below never let through, so its bridge could not run.
+            || eventId == rtengine::EvShrAmount || eventId == rtengine::EvShrRadius
+            || eventId == rtengine::EvShrEnabled || eventId == rtengine::EvShrThresh
+            || eventId == rtengine::EvShrMethod || eventId == rtengine::EvShrDRadius
+            || eventId == rtengine::EvShrDAmount || eventId == rtengine::EvShrDDamping
+            || eventId == rtengine::EvShrDIterations
+            || eventId == rtengine::EvSHEnabled || eventId == rtengine::EvSHRadius
+            || eventId == rtengine::EvSHHLTonalW || eventId == rtengine::EvSHSHTonalW
+            || eventId == rtengine::EvVibranceEnabled || eventId == rtengine::EvVibranceProtectSkins
+            || eventId == rtengine::EvVibranceAvoidColorShift || eventId == rtengine::EvVibrancePastSatTog
+            || eventId == rtengine::EvVibrancePastSatThreshold
+            || (eventId == rtengine::EvProfileChanged && !pendingMaskGroupReset_.empty()));
     if (colourBridgeEvent && bridgeGlobalToSpot(params, event)) {
         changeFlags = M_AUTOEXP;
     } else if ((changeFlags & (M_AUTOEXP | M_RGBCURVE | M_LUMACURVE | M_CROP))
@@ -5980,41 +6066,25 @@ void ToolPanelCoordinator::resetGroupToNeutral(
         strip->resetScrubber();
     }
 
-    // On the Mask pane the tool widgets show a spot's values, so panelChanged
-    // stamps the photograph's real globals back over whatever they wrote. That
-    // restore does not know a reset from an accident, and it swallowed the
-    // group's reset whole: the sliders went to zero and the picture did not
-    // move. Reset the stashed globals alongside the widgets.
+    // On the Mask pane the widgets show the selected mask's values, so the
+    // group's reset X resets that mask. It used to neutralise the photo's
+    // stashed globals instead: one click on the Mask pane wiped the whole
+    // photo's grade while the mask kept its own values. The bridge applies
+    // it, after the tools write, so nothing stale lands on top.
     if (maskModeActive_) {
-        // Fill the stash from the engine first when it is empty, or
-        // panelChanged's own refresh runs after this and re-reads the very
-        // values being cleared. It is empty on the first change after a photo
-        // is opened on the Mask pane, which is exactly when a reset is likely.
         if (!maskGlobalsValid_ && ipc) {
             ProcParams live;
             ipc->getParams(&live);
             refreshMaskModeGlobals(&live);
         }
-
-        for (ToolPanel* panel : panels) {
-            if (panel == toneCurve) {
-                savedToneCurve_ = neutral.toneCurve;
-            } else if (panel == shadowshighlights) {
-                savedSH_ = neutral.sh;
-            } else if (panel == vibrance) {
-                savedVibrance_ = neutral.vibrance;
-            } else if (panel == sharpening) {
-                savedSharpening_ = neutral.sharpening;
-            } else if (panel == blackwhite) {
-                savedBlackWhite_ = neutral.blackwhite;
-            }
-        }
+        pendingMaskGroupReset_.assign(panels.begin(), panels.end());
     }
 
     // panelChanged re-reads every panel and settles the group's X itself. If
     // some part of the group did not actually come back, the X stays lit and
     // says so, rather than being hidden by hand while the edit is still there.
     panelChanged(rtengine::EvProfileChanged, M("GENERAL_CHANGED"));
+    pendingMaskGroupReset_.clear();    // never left for a later profile load
 }
 
 void ToolPanelCoordinator::captureNeutralReference()

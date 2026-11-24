@@ -351,7 +351,10 @@ private:
     void restoreColourMaskGlobals(rtengine::procparams::ProcParams& params) const;
     bool bridgeColourToSpot(rtengine::procparams::ProcParams* params, int id,
                             rtengine::procparams::LocallabParams::LocallabSpot& spot) const;
-    void setGlobalOnlyColourToolsSensitive(bool sensitive);
+    void setGlobalOnlyToolsSensitive(bool sensitive);
+    // A group reset X pressed on the Mask pane: the bridge resets these
+    // panels' fields on the selected spot (see resetGroupToNeutral).
+    std::vector<ToolPanel*> pendingMaskGroupReset_;
 
     bool bridgeGlobalToSpot(rtengine::procparams::ProcParams* params, const rtengine::ProcEvent& event);
     void loadSpotIntoGlobalTools();
