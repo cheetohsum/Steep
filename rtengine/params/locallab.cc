@@ -766,6 +766,7 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     strengr(0),
     colorgr(-1),
     rgbcurveGamma(false),
+    scopeOpen(true),
     scalegr(100),
     divgr(1.),
     epsbl(0),
@@ -2465,6 +2466,7 @@ bool LocallabParams::LocallabSpot::operator ==(const LocallabSpot& other) const
         && strengr == other.strengr
         && colorgr == other.colorgr
         && rgbcurveGamma == other.rgbcurveGamma
+        && scopeOpen == other.scopeOpen
         && scalegr == other.scalegr
         && divgr == other.divgr
         && epsbl == other.epsbl
@@ -3575,6 +3577,14 @@ void LoadUtil::blurNoise()
     assignFromKeyfile(keyFile, "Locallab", "Strengr_" + index_str, spot.strengr, spotEdited.strengr);
     assignFromKeyfile(keyFile, "Locallab", "Colorgr_" + index_str, spot.colorgr, spotEdited.colorgr);
     assignFromKeyfile(keyFile, "Locallab", "RGBCurveGamma_" + index_str, spot.rgbcurveGamma, spotEdited.rgbcurveGamma);
+    // A new mask ignores colour similarity. A photo saved before the key
+    // existed keeps the scope it was edited with, so it renders as it did.
+    if (keyFile.has_key("Locallab", "ScopeOpen_" + index_str)) {
+        assignFromKeyfile(keyFile, "Locallab", "ScopeOpen_" + index_str, spot.scopeOpen, spotEdited.scopeOpen);
+    } else {
+        spot.scopeOpen = false;
+        spotEdited.scopeOpen = true; // or the default (open) survives the merge onto fresh params
+    }
     assignFromKeyfile(keyFile, "Locallab", "Scalegr_" + index_str, spot.scalegr, spotEdited.scalegr);
     assignFromKeyfile(keyFile, "Locallab", "Divgr_" + index_str, spot.divgr, spotEdited.divgr);
     assignFromKeyfile(keyFile, "Locallab", "Epsbl_" + index_str, spot.epsbl, spotEdited.epsbl);
@@ -4750,6 +4760,7 @@ void SaveUtil::blurNoise()
         saveToKeyfile(!pedited || spot_edited->strengr, "Locallab", "Strengr_" + index_str, spot.strengr, keyFile);
         saveToKeyfile(!pedited || spot_edited->colorgr, "Locallab", "Colorgr_" + index_str, spot.colorgr, keyFile);
         saveToKeyfile(!pedited || spot_edited->rgbcurveGamma, "Locallab", "RGBCurveGamma_" + index_str, spot.rgbcurveGamma, keyFile);
+        saveToKeyfile(!pedited || spot_edited->scopeOpen, "Locallab", "ScopeOpen_" + index_str, spot.scopeOpen, keyFile);
         saveToKeyfile(!pedited || spot_edited->scalegr, "Locallab", "Scalegr_" + index_str, spot.scalegr, keyFile);
         saveToKeyfile(!pedited || spot_edited->divgr, "Locallab", "Divgr_" + index_str, spot.divgr, keyFile);
         saveToKeyfile(!pedited || spot_edited->epsbl, "Locallab", "Epsbl_" + index_str, spot.epsbl, keyFile);

@@ -362,6 +362,7 @@ struct LocallabParams {
         int strengr;
         int colorgr; // -1 = the older spot grain; 0..100 = the Grain tool's own engine with this dye colour
         bool rgbcurveGamma; // the RGB tone curve is drawn against display (sRGB-encoded) values, like the Exposure tool's
+        bool scopeOpen; // edits reach the whole mask; false keeps the per-tool colour-similarity scope (photos saved before this existed)
         int scalegr;
         double divgr;
         int epsbl;

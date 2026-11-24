@@ -1836,6 +1836,13 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         restoreColourMaskGlobals(*params);
     }
 
+    if (bridged) {
+        // An edit made here lands on the whole mask, not only on the colours
+        // near its centre (older masks carry the scope they were saved with
+        // until they are edited again).
+        spot.scopeOpen = true;
+    }
+
     return bridged;
 }
 

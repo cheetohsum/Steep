@@ -1837,6 +1837,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).strengr = locallab.spots.at(j).strengr && pSpot.strengr == otherSpot.strengr;
                 locallab.spots.at(j).colorgr = locallab.spots.at(j).colorgr && pSpot.colorgr == otherSpot.colorgr;
                 locallab.spots.at(j).rgbcurveGamma = locallab.spots.at(j).rgbcurveGamma && pSpot.rgbcurveGamma == otherSpot.rgbcurveGamma;
+                locallab.spots.at(j).scopeOpen = locallab.spots.at(j).scopeOpen && pSpot.scopeOpen == otherSpot.scopeOpen;
                 locallab.spots.at(j).scalegr = locallab.spots.at(j).scalegr && pSpot.scalegr == otherSpot.scalegr;
                 locallab.spots.at(j).divgr = locallab.spots.at(j).divgr && pSpot.divgr == otherSpot.divgr;
                 locallab.spots.at(j).epsbl = locallab.spots.at(j).epsbl && pSpot.epsbl == otherSpot.epsbl;
@@ -5730,6 +5731,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
         if (locallab.spots.at(i).rgbcurveGamma) {
             toEdit.locallab.spots.at(i).rgbcurveGamma = mods.locallab.spots.at(i).rgbcurveGamma;
+        }
+
+        if (locallab.spots.at(i).scopeOpen) {
+            toEdit.locallab.spots.at(i).scopeOpen = mods.locallab.spots.at(i).scopeOpen;
         }
 
         if (locallab.spots.at(i).scalegr) {
@@ -9940,6 +9945,7 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     strengr(v),
     colorgr(v),
     rgbcurveGamma(v),
+    scopeOpen(v),
     scalegr(v),
     divgr(v),
     epsbl(v),
@@ -10820,6 +10826,7 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     strengr = v;
     colorgr = v;
     rgbcurveGamma = v;
+    scopeOpen = v;
     scalegr = v;
     divgr = v;
     epsbl = v;
