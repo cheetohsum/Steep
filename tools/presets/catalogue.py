@@ -136,6 +136,12 @@ look(G, "Release Print Rich", "print", "A dense theatrical print: deep blacks, s
      Output="cinema", Contrast=15, Saturation=8, lab=dict(c=0.3))
 look(G, "Release Print Soft", "print", "A low-contrast print with long highlight roll-off, made for further grading.",
      Output="cinema", Contrast=-15, Rolloff=40, lab=dict(c=-0.2))
+# Folded in from the retired Creative group (Cinematic Cool / Cinematic Warm), rebuilt without
+# the exposure and white-balance settings that made the originals reset a picture.
+look(G, "Steel Blue Feature", "print", "A cool modern feature grade: colour cooled and thinned, steel-blue shadows, firm contrast.",
+     Output="cinema", Warmth=-25, Saturation=-15, cg=dict(sh=(BLUE, 9), gl=(CYAN, 2)), lab=dict(c=0.35))
+look(G, "Golden Feature", "print", "A warm feature grade: amber highlights, warm soft shadows, a gentle shoulder and darkened corners.",
+     "golden_hour", Output="cinema", Warmth=12, Contrast=-10, cg=dict(sh=(ORANGE, 3), hi=(AMBER, 7)), lab=dict(c=0.15, black=0.02), vig=(0.3, 60))
 look(G, "Colour Noir", "palette", "Noir in colour: thin saturation, green-black shadows, corners falling away.",
      "street_800", Saturation=-30, Contrast=5, cg=dict(sh=(SEA, 9)), vig=(0.25, 55))
 look(G, "Fluorescent Thriller", "palette", "Sick green office light: a green cast through the mids over teal shadows.",
@@ -241,6 +247,9 @@ look(G, "Newsprint Mono", "documentary", "A picture as the newspaper printed it:
      S, Contrast=-15, lab=dict(black=0.12, white=0.86, c=0.3), grain=(1600, 55))
 look(G, "Wire Photo Mono", "documentary", "Agency black-and-white: crisp and firm, made to survive reproduction.",
      S, Contrast=-24, FilmSharpness=60, clarity=15)
+# From the retired Creative group (High Contrast BW): hard and crisp, but without grain.
+look(G, "Silver Crisp", "documentary", "High-contrast black-and-white without grain: orange filter, deep blacks, crisp detail.",
+     S, BWFilter="orange", Contrast=-30, lab=dict(c=0.2), clarity=20)
 look(G, "Flash Mono", "documentary", "Direct flash at night: bright foreground, falling to dark corners.",
      S, Contrast=-26, Rolloff=-40, vig=(0.4, 35))
 # lens filters
@@ -295,6 +304,9 @@ look(G, "Pushed Two Stops", "grit", "Fast film pushed hard: contrast, blocked sh
      "street_800", PushPull=0.3, Contrast=10, grain=(3200, 70))
 look(G, "Expired Roll", "decay", "Out-of-date film: magenta drift, grey blacks, mottled colour grain.",
      "fade_bloom", lab=dict(black=0.05), grain=(800, 45, 50))
+# From the retired Creative group (Faded Film).
+look(G, "Faded Film", "decay", "A faded colour print: grey blacks, dulled whites, a quarter of the colour gone with a warm tilt, fine grain.",
+     "nostalgia_200", Saturation=-25, Warmth=6, lab=dict(black=0.07, white=0.94, c=-0.15), grain=(400, 25))
 look(G, "Toy Camera", "decay", "Plastic lens: heavy corners, glow, bright colour, hard contrast.",
      "heritage_gold", Saturation=15, lab=dict(c=0.2), fx=dict(glow=20), vig=(0.6, 30))
 # --------------------------------------------------------------------------------------------
@@ -309,6 +321,8 @@ look(G, "Portrait Cool Studio", "portrait", "Cool, controlled studio colour.",
      "sovereign", Strength=60, Warmth=-25, Saturation=-8, cg=dict(gl=(BLUE, 2)))
 look(G, "Portrait Window Soft", "portrait", "Window light: soft contrast, lifted mid-tones, a little glow.",
      "porcelain_400", Contrast=-20, lab=dict(c=-0.2, mid=0.2), fx=dict(glow=12))
+# The retired Creative group's Soft Portrait is Portrait Window Soft: rendered side by side they
+# differed by less than any two other looks in the library, so it was not added again.
 look(G, "Fashion Crisp", "portrait", "Fashion editorial: paper-print contrast, colour held back, hard detail.",
      Output="ra4", Contrast=0, Saturation=-8, clarity=12)
 look(G, "Wedding Light and Airy", "wedding", "Light and airy: soft contrast, raised mid-tones, pale blacks, gentle glow.",
@@ -348,6 +362,9 @@ look(G, "Landscape Golden", "landscape", "Low sun: golden highlights and warm co
      "golden_hour", Saturation=10, cg=dict(hi=(AMBER, 7), bal=80))
 look(G, "Landscape Moody", "landscape", "Weather: thin colour, teal shadows, lowered mid-tones, strong structure.",
      Saturation=-20, Contrast=15, cg=dict(sh=(TEAL, 5)), lab=dict(mid=-0.3), vig=(0.3, 60), clarity=20)
+# From the retired Creative group (Moody Landscape): the full-colour side of bad weather.
+look(G, "Landscape Brooding Colour", "landscape", "Weather in full colour: haze cut, rich colour, darkened mid-tones, strong structure.",
+     Saturation=10, Vibrance=35, lab=dict(mid=-0.15, c=0.3), dehaze=25, clarity=18, vig=(0.2, 60))
 look(G, "Seascape Cool", "landscape", "Sea and sky: cool reversal stock with cyan in the shadows.",
      "arctic", Strength=60, cg=dict(sh=(CYAN, 4)))
 look(G, "Forest Deep Green", "landscape", "Woodland: deep, slightly cool greens and dense shade.",
@@ -519,6 +536,10 @@ look(G, "Cut Through Haze", "structure", "Haze stripped out: dense distance, hea
      "desert_chrome", Strength=45, dehaze=40, clarity=12)
 look(G, "Etched Mono", "structure", "Black-and-white with the structure of an engraving.",
      "silver_gelatin", Contrast=-45, BWFilter="orange", clarity=42, texture=55, grain=(400, 25))
+# The retired Pop group, rebuilt: its brightness came from +1 EV of exposure, which a look may not
+# set, so the lift is in the mid-tones and the punch from local contrast.
+look(G, "Pop Bright", "structure", "Bright and punchy: lifted mid-tones, tone-mapped local contrast, rich colour, darker corners.",
+     Saturation=15, Vibrance=30, Rolloff=30, lab=dict(mid=0.2, c=0.1, chroma=12, white=0.97), clarity=25, soft=12, vig=(0.3, 50))
 look(G, "Velvet Blur", "structure", "Clarity run backwards: glowing, smooth, low in detail.",
      "analog_dream", lab=dict(c=-0.2, black=0.04), clarity=-55, fx=dict(glow=45, radius=40))
 
