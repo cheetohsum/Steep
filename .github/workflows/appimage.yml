@@ -41,15 +41,10 @@ jobs:
 
       - name: Install ONNX Runtime
         run: |
-          ONNX_VERSION="1.17.1"
-          echo "Downloading ONNX Runtime ${ONNX_VERSION} for x64."
-          curl -L -o onnxruntime.tgz \
-            "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-linux-x64-${ONNX_VERSION}.tgz"
-          echo "Extracting ONNX Runtime."
-          tar xzf onnxruntime.tgz
+          bash .github/scripts/fetch-onnxruntime.sh 1.17.1 linux-x64 "$RUNNER_TEMP/onnxruntime"
           echo "Installing headers and library."
-          sudo cp -r onnxruntime-linux-x64-${ONNX_VERSION}/include/* /usr/local/include/
-          sudo cp onnxruntime-linux-x64-${ONNX_VERSION}/lib/* /usr/local/lib/
+          sudo cp -r "$RUNNER_TEMP/onnxruntime/include/." /usr/local/include/
+          sudo cp -P "$RUNNER_TEMP/onnxruntime/lib/"* /usr/local/lib/
           sudo ldconfig
 
       - name: Install makedeb
@@ -308,15 +303,10 @@ jobs:
 
       - name: Install ONNX Runtime
         run: |
-          ONNX_VERSION="1.17.1"
-          echo "Downloading ONNX Runtime ${ONNX_VERSION} for aarch64."
-          curl -L -o onnxruntime.tgz \
-            "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-linux-aarch64-${ONNX_VERSION}.tgz"
-          echo "Extracting ONNX Runtime."
-          tar xzf onnxruntime.tgz
+          bash .github/scripts/fetch-onnxruntime.sh 1.17.1 linux-arm64 "$RUNNER_TEMP/onnxruntime"
           echo "Installing headers and library."
-          sudo cp -r onnxruntime-linux-aarch64-${ONNX_VERSION}/include/* /usr/local/include/
-          sudo cp onnxruntime-linux-aarch64-${ONNX_VERSION}/lib/* /usr/local/lib/
+          sudo cp -r "$RUNNER_TEMP/onnxruntime/include/." /usr/local/include/
+          sudo cp -P "$RUNNER_TEMP/onnxruntime/lib/"* /usr/local/lib/
           sudo ldconfig
 
       - name: Install Exiv2

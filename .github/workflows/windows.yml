@@ -106,15 +106,8 @@ jobs:
             ONNX_DIR="$(pwd)/ext/onnxruntime"
             echo "Using bundled ONNX Runtime with DirectML from ${ONNX_DIR}."
           else
-            ONNX_VERSION="1.17.1"
-            ONNX_ARCHIVE="onnxruntime-win-arm64-${ONNX_VERSION}.zip"
-            echo "Downloading ONNX Runtime ${ONNX_VERSION} for ${{matrix.arch}}."
-            curl -L -o onnxruntime.zip \
-              "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/${ONNX_ARCHIVE}"
-            echo "Extracting ONNX Runtime."
-            unzip -q onnxruntime.zip
-            ONNX_DIR="$(pwd)/$(ls -d onnxruntime-win-*)"
-            echo "ONNX Runtime extracted to ${ONNX_DIR}"
+            ONNX_DIR="$(pwd)/onnxruntime-win-arm64"
+            bash .github/scripts/fetch-onnxruntime.sh 1.17.1 win-arm64 "${ONNX_DIR}"
 
             echo "Patching ONNX Runtime header for MinGW compatibility."
             sed -i 's/#define ORT_API_CALL _stdcall/#define ORT_API_CALL/' \

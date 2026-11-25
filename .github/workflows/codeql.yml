@@ -18,7 +18,9 @@ on:
 jobs:
   analyze:
     name: Analyze
-    runs-on: ubuntu-latest
+    # The libjxl packages below are built for Ubuntu 24.04; on the newer
+    # image ubuntu-latest became, their dependencies no longer resolve.
+    runs-on: ubuntu-24.04
     permissions:
       actions: read
       contents: read
