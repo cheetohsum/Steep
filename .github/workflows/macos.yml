@@ -176,7 +176,9 @@ jobs:
 
 
   armbuild:
-    runs-on: macos-14
+    # macos-14 was retired by GitHub (jobs are cancelled at once with "not
+    # supported"); macos-15 is the current Apple Silicon image.
+    runs-on: macos-15
     permissions:
       contents: write
     steps:

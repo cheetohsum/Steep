@@ -993,11 +993,20 @@ bool sameContent(const std::string& a, const std::string& b)
     const long long size = static_cast<long long>(sa.st_size);
     const long long block = 64 * 1024;
     std::vector<char> ba(block), bb(block);
+    // A 64-bit seek on every platform: fseeko64 is Windows and glibc only,
+    // while macOS's own fseeko already takes a 64-bit offset.
+    const auto seek = [](FILE* f, long long off) {
+#ifdef _WIN32
+        return _fseeki64(f, off, SEEK_SET) == 0;
+#else
+        return fseeko(f, static_cast<off_t>(off), SEEK_SET) == 0;
+#endif
+    };
     for (long long off : {0LL, std::max(0LL, size / 2 - block / 2), std::max(0LL, size - block)}) {
         if (!same) {
             break;
         }
-        same = fseeko64(fa, off, SEEK_SET) == 0 && fseeko64(fb, off, SEEK_SET) == 0;
+        same = seek(fa, off) && seek(fb, off);
         const size_t na = same ? std::fread(ba.data(), 1, block, fa) : 0;
         const size_t nb = same ? std::fread(bb.data(), 1, block, fb) : 0;
         same = same && na == nb && std::memcmp(ba.data(), bb.data(), na) == 0;
