@@ -1,6 +1,11 @@
 # Removes the tilt-shift blur.
 # Layer: carries only the sections below, so it stacks on the current look.
-# Apply with the fill option off; it never sets exposure or white balance.
+# It never sets exposure or white balance.
+[Steep Look]
+Version=2
+Kind=look
+Id=layers-finish-focus-off
+Family=layer
 
 [TiltShift]
 Enabled=false

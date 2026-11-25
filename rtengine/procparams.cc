@@ -5689,7 +5689,39 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             return 1;
         }
 
-        const bool filmLook = keyFile.has_group("Steep Look");
+        const bool steepLook = keyFile.has_group("Steep Look");
+        // Version 2, Kind=look: a look or a layer. It may carry only the
+        // sections that give a picture its character, and it is always applied
+        // key by key: it never places exposure, white balance, geometry, lens
+        // or raw settings, and the preset list never fills the rest of the
+        // edit with defaults around it.
+        const bool generalLook = steepLook && keyFile.has_key("Steep Look", "Version")
+            && keyFile.get_integer("Steep Look", "Version") == 2;
+        if (generalLook) {
+            static const char* const lookGroups[] = {
+                "Steep Look", "Version", "Film Presets", "Color Grading", "ColorToning", "Luminance Curve",
+                "Black & White", "Grain", "Light Effects", "PCVignette", "TiltShift", "Gradient",
+                "SoftLight", "Dehaze", "Clarity", "Texture"
+            };
+            if (keyFile.get_string("Steep Look", "Kind") != "look") {
+                return 1;
+            }
+            for (const auto& group : keyFile.get_groups()) {
+                bool allowed = false;
+                for (const char* name : lookGroups) {
+                    allowed = allowed || group == name;
+                }
+                if (!allowed) {
+                    return 1;
+                }
+            }
+            for (const char* key : {"Exposure", "PrintExposure"}) {
+                if (keyFile.has_group("Film Presets") && keyFile.has_key("Film Presets", key)) {
+                    return 1;
+                }
+            }
+        }
+        const bool filmLook = steepLook && !generalLook;
         if (filmLook) {
             if (keyFile.get_integer("Steep Look", "Version") != 1
                 || keyFile.get_string("Steep Look", "Kind") != "film"
@@ -8390,6 +8422,11 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
         if (filmLook) {
             pedited->set(false);
             pedited->filmPresets = ParamsEdited(true).filmPresets;
+            pedited->filmLook = true;
+        }
+
+        if (generalLook) {
+            // The keys the file carried stay flagged; nothing else is.
             pedited->filmLook = true;
         }
 

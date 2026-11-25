@@ -29,7 +29,7 @@ RED, ORANGE, AMBER, YELLOW, LIME, GREEN, SEA = 28, 60, 74, 95, 125, 150, 172
 TEAL, CYAN, BLUE, VIOLET, PURPLE, MAGENTA, PINK = 205, 222, 268, 295, 315, 340, 8
 
 GROUPS = {}
-RETIRED_GROUPS = []
+RETIRED_GROUPS = ["Creative", "Pop"]
 
 DEFAULT_STRENGTH = {"heritage_gold": 65, "golden_hour": 70, "twilight_160": 70, "ember": 55, "porcelain_400": 85,
                     "nostalgia_200": 85, "street_800": 80, "fade_bloom": 75, "analog_dream": 75,

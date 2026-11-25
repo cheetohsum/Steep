@@ -1,7 +1,12 @@
 # The weight of a paper print: firm blacks and dense lower mid-tones.
 # Look: owns Film Lab, colour grading and toning, the Lab curves, the Black-and-White
 # switch and the finish tools below. It never sets exposure, white balance, crop or lens
-# corrections. Apply with the fill option off so the rest of the edit is kept.
+# corrections, and the rest of the edit is always kept.
+[Steep Look]
+Version=2
+Kind=look
+Id=texture-print-density
+Family=density
 
 [Film Presets]
 Enabled=true

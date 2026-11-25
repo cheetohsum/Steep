@@ -504,6 +504,7 @@ public:
     int inspectorDelay;
     int clutCacheSize;
     bool filledProfile;  // Used as reminder for the ProfilePanel "mode"
+    std::vector<Glib::ustring> presetFavorites;  // virtual paths ("${G}/Cinema/Quiet Teal"), in the order they were starred
     prevdemo_t prevdemo; // Demosaicing method used for the <100% preview
     bool serializeTiffRead;
     bool measure;

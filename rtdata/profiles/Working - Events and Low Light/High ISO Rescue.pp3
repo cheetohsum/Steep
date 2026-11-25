@@ -1,7 +1,12 @@
 # Very high ISO: colour and contrast reduced, texture eased, fine grain laid over the noise.
 # Look: owns Film Lab, colour grading and toning, the Lab curves, the Black-and-White
 # switch and the finish tools below. It never sets exposure, white balance, crop or lens
-# corrections. Apply with the fill option off so the rest of the edit is kept.
+# corrections, and the rest of the edit is always kept.
+[Steep Look]
+Version=2
+Kind=look
+Id=working-events-and-low-light-high-iso-rescue
+Family=low-light
 
 [Film Presets]
 Enabled=true

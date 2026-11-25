@@ -108,7 +108,13 @@ private:
     void buildContent();
     void buildCategoryContent(Gtk::Box* parent, int parentFolderId,
                               const std::vector<const ProfileStoreEntry*>* entryList);
-    Gtk::Button* createCard(const ProfileStoreEntry* entry);
+    Gtk::Button* createCard(const ProfileStoreEntry* entry, bool favouriteCopy = false);
+    // A collapsible group that is not a folder on disk (Favourites, Technical).
+    Gtk::Box* addVirtualCategory(Gtk::Box* parent, const Glib::ustring& label, const Glib::ustring& icon,
+                                 int key, bool expandedByDefault);
+    Glib::ustring favouriteKey(const ProfileStoreEntry* entry) const;
+    bool isFavourite(const ProfileStoreEntry* entry) const;
+    void toggleFavourite(const ProfileStoreEntry* entry);
 
     // Selection
     void selectEntry(const ProfileStoreEntry* entry, bool fireChange = true);
@@ -159,6 +165,9 @@ private:
     // Card tracking
     std::map<const ProfileStoreEntry*, Gtk::Button*> cardMap_;
     std::map<const ProfileStoreEntry*, Gtk::Image*> thumbImageMap_;
+    // The second card a favourite gets in the Favourites group.
+    std::map<const ProfileStoreEntry*, Gtk::Button*> favCardMap_;
+    std::map<const ProfileStoreEntry*, Gtk::Image*> favThumbMap_;
     const ProfileStoreEntry* selectedEntry_;
     Gtk::Widget* selectedWidget_;
 

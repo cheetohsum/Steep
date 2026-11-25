@@ -357,6 +357,8 @@ void PresetListPanel::buildContent()
 {
     cardMap_.clear();
     thumbImageMap_.clear();
+    favCardMap_.clear();
+    favThumbMap_.clear();
     categoryHeaders_.clear();
 
     // Clear grid content
@@ -388,6 +390,34 @@ void PresetListPanel::buildContent()
             flowBox->add(*createCard(entry));
         }
         gridBox_->pack_start(*flowBox, Gtk::PACK_SHRINK);
+    }
+
+    // Favourites: starred presets, in the order they were starred, above
+    // the user's own and the built-in groups.
+    {
+        std::vector<const ProfileStoreEntry*> favourites;
+        for (const auto& key : App::get().options().presetFavorites) {
+            for (auto* entry : *entryList) {
+                if (entry->type != PSET_FOLDER && favouriteKey(entry) == key) {
+                    favourites.push_back(entry);
+                    break;
+                }
+            }
+        }
+        if (!favourites.empty()) {
+            auto* box = addVirtualCategory(gridBox_, M("PRESET_FAVOURITES"), "star-gold-small", -10, true);
+            auto* flowBox = Gtk::manage(new Gtk::FlowBox());
+            flowBox->set_selection_mode(Gtk::SELECTION_NONE);
+            flowBox->set_homogeneous(true);
+            flowBox->set_min_children_per_line(3);
+            flowBox->set_max_children_per_line(20);
+            flowBox->set_column_spacing(1);
+            flowBox->set_row_spacing(1);
+            for (auto* entry : favourites) {
+                flowBox->add(*createCard(entry, true));
+            }
+            box->pack_start(*flowBox, Gtk::PACK_SHRINK);
+        }
     }
 
     std::vector<const ProfileStoreEntry*> rootFolders;
@@ -498,16 +528,30 @@ void PresetListPanel::buildCategoryContent(
     // Collect files and folders at this level
     std::vector<const ProfileStoreEntry*> files;
     std::vector<const ProfileStoreEntry*> folders;
+    // The built-in folder's loose files and its two raw-handling folders are
+    // processing profiles, not looks: they go in one group, shut, at the end.
+    std::vector<const ProfileStoreEntry*> technicalFiles;
+    std::vector<const ProfileStoreEntry*> technicalFolders;
+    const bool builtIn = Glib::ustring(ProfileStore::getInstance()->getPathFromId(parentFolderId)) == "${G}";
 
     for (auto* entry : *entryList) {
         if (entry->parentFolderId == parentFolderId) {
             if (entry->type == PSET_FOLDER) {
-                folders.push_back(entry);
+                if (builtIn && (entry->label == "Pixel Shift" || entry->label == "Non-raw")) {
+                    technicalFolders.push_back(entry);
+                } else {
+                    folders.push_back(entry);
+                }
+            } else if (builtIn) {
+                technicalFiles.push_back(entry);
             } else {
                 files.push_back(entry);
             }
         }
     }
+    folders.insert(folders.end(), technicalFolders.begin(), technicalFolders.end());
+    Gtk::Box* const outerParent = parent;
+    Gtk::Box* technicalBox = nullptr;
 
     // Add files to a FlowBox grid
     if (!files.empty()) {
@@ -530,6 +574,11 @@ void PresetListPanel::buildCategoryContent(
     // Add sub-folders as animated categories
     for (auto* folder : folders) {
         Glib::ustring folderPath(ProfileStore::getInstance()->getPathFromId(folder->folderId));
+        const bool technical = std::find(technicalFolders.begin(), technicalFolders.end(), folder) != technicalFolders.end();
+        if (technical && !technicalBox) {
+            technicalBox = addVirtualCategory(outerParent, M("PRESET_TECHNICAL"), "folder-closed-small", -11, false);
+        }
+        parent = technical ? technicalBox : outerParent;
 
         if (App::get().options().useBundledProfiles ||
             ((folderPath != "${G}") && (folderPath != "${U}"))) {
@@ -592,9 +641,113 @@ void PresetListPanel::buildCategoryContent(
             buildCategoryContent(parent, folder->folderId, entryList);
         }
     }
+
+    if (!technicalFiles.empty()) {
+        if (!technicalBox) {
+            technicalBox = addVirtualCategory(outerParent, M("PRESET_TECHNICAL"), "folder-closed-small", -11, false);
+        }
+        auto* flowBox = Gtk::manage(new Gtk::FlowBox());
+        flowBox->set_selection_mode(Gtk::SELECTION_NONE);
+        flowBox->set_homogeneous(true);
+        flowBox->set_min_children_per_line(3);
+        flowBox->set_max_children_per_line(20);
+        flowBox->set_column_spacing(1);
+        flowBox->set_row_spacing(1);
+        for (auto* entry : technicalFiles) {
+            flowBox->add(*createCard(entry));
+        }
+        technicalBox->pack_start(*flowBox, Gtk::PACK_SHRINK);
+        technicalBox->reorder_child(*flowBox, 0);
+    }
 }
 
-Gtk::Button* PresetListPanel::createCard(const ProfileStoreEntry* entry)
+Gtk::Box* PresetListPanel::addVirtualCategory(Gtk::Box* parent, const Glib::ustring& label, const Glib::ustring& icon,
+                                              int key, bool expandedByDefault)
+{
+    auto* catBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+    catBox->get_style_context()->add_class("preset-category");
+
+    auto* headerEvBox = Gtk::manage(new Gtk::EventBox());
+    headerEvBox->get_style_context()->add_class("preset-category-header");
+    auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    auto* arrowImage = Gtk::manage(new RTImage("expander-open-small", Gtk::ICON_SIZE_MENU));
+    auto* categoryImage = Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_MENU));
+    auto* nameLabel = Gtk::manage(new Gtk::Label(label));
+    nameLabel->get_style_context()->add_class("preset-category-label");
+    nameLabel->set_xalign(0.0);
+    headerRow->pack_start(*arrowImage, Gtk::PACK_SHRINK);
+    headerRow->pack_start(*categoryImage, Gtk::PACK_SHRINK);
+    headerRow->pack_start(*nameLabel, Gtk::PACK_EXPAND_WIDGET);
+    headerEvBox->add(*headerRow);
+
+    auto* revealer = Gtk::manage(new Gtk::Revealer());
+    revealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    steep::motion::configureRevealer(*revealer);
+
+    bool expanded = expandedByDefault;
+    const auto expIt = categoryExpanded_.find(key);
+    if (expIt != categoryExpanded_.end()) {
+        expanded = expIt->second;
+    }
+    revealer->set_reveal_child(expanded);
+    arrowImage->set_from_icon_name(expanded ? "expander-open-small" : "expander-closed-small");
+    categoryExpanded_[key] = expanded;
+
+    headerEvBox->signal_button_press_event().connect(
+        [this, revealer, arrowImage, key](GdkEventButton* event) -> bool {
+            if (event->button != 1) {
+                return false;
+            }
+            const bool nowExpanded = !revealer->get_reveal_child();
+            revealer->set_reveal_child(nowExpanded);
+            arrowImage->set_from_icon_name(nowExpanded ? "expander-open-small" : "expander-closed-small");
+            categoryExpanded_[key] = nowExpanded;
+            return true;
+        }, false);
+
+    auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
+    revealer->add(*box);
+    catBox->pack_start(*headerEvBox, Gtk::PACK_SHRINK);
+    catBox->pack_start(*revealer, Gtk::PACK_SHRINK);
+    parent->pack_start(*catBox, Gtk::PACK_SHRINK);
+    return box;
+}
+
+Glib::ustring PresetListPanel::favouriteKey(const ProfileStoreEntry* entry) const
+{
+    if (!entry || entry->type == PSET_FOLDER) {
+        return {};
+    }
+    return Glib::ustring(ProfileStore::getInstance()->getPathFromId(entry->parentFolderId)) + "/" + entry->label;
+}
+
+bool PresetListPanel::isFavourite(const ProfileStoreEntry* entry) const
+{
+    const auto& favourites = App::get().options().presetFavorites;
+    return std::find(favourites.begin(), favourites.end(), favouriteKey(entry)) != favourites.end();
+}
+
+void PresetListPanel::toggleFavourite(const ProfileStoreEntry* entry)
+{
+    const Glib::ustring key = favouriteKey(entry);
+    if (key.empty()) {
+        return;
+    }
+    auto& favourites = App::get().mut_options().presetFavorites;
+    const auto it = std::find(favourites.begin(), favourites.end(), key);
+    if (it != favourites.end()) {
+        favourites.erase(it);
+    } else {
+        favourites.push_back(key);
+    }
+    // Written at once: a killed process loses options that were only in memory.
+    Options::save();
+    cancelHover();
+    buildContent();
+    queueThumbnailGeneration();
+}
+
+Gtk::Button* PresetListPanel::createCard(const ProfileStoreEntry* entry, bool favouriteCopy)
 {
     auto* card = Gtk::manage(new Gtk::Button());
     card->set_relief(Gtk::RELIEF_NONE);
@@ -698,8 +851,13 @@ Gtk::Button* PresetListPanel::createCard(const ProfileStoreEntry* entry)
         return false;
     }, false);
 
-    cardMap_[entry] = card;
-    thumbImageMap_[entry] = img;
+    if (favouriteCopy) {
+        favCardMap_[entry] = card;
+        favThumbMap_[entry] = img;
+    } else {
+        cardMap_[entry] = card;
+        thumbImageMap_[entry] = img;
+    }
 
     return card;
 }
@@ -748,6 +906,13 @@ void PresetListPanel::highlightSelection()
     if (selectedWidget_) {
         selectedWidget_->get_style_context()->remove_class("selected");
         selectedWidget_ = nullptr;
+    }
+    for (const auto& pair : favCardMap_) {
+        if (pair.first == selectedEntry_) {
+            pair.second->get_style_context()->add_class("selected");
+        } else {
+            pair.second->get_style_context()->remove_class("selected");
+        }
     }
 
     if (!selectedEntry_) {
@@ -1610,6 +1775,10 @@ void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry, ::Thumbn
             if (it != thumbImageMap_.end() && it->second) {
                 it->second->set(pixbufCopy);
             }
+            auto fav = favThumbMap_.find(capturedEntry);
+            if (fav != favThumbMap_.end() && fav->second) {
+                fav->second->set(pixbufCopy);
+            }
         }
     });
 }
@@ -1702,6 +1871,15 @@ void PresetListPanel::showCardContextMenu(GdkEventButton* event, const ProfileSt
     cardMenu_->addItem("menu-profile-apply", M("PRESET_APPLY"), [this, entry]() {
         selectEntry(entry);
     });
+
+    if (!favouriteKey(entry).empty() && entry != customPSE_ && entry != lastSavedPSE_) {
+        const bool starred = isFavourite(entry);
+        cardMenu_->addItem(starred ? "star-gold-hollow-small" : "star-gold-small",
+                           M(starred ? "PRESET_FAVOURITE_REMOVE" : "PRESET_FAVOURITE_ADD"), [this, entry]() {
+            // The menu is still popping down; rebuild the cards once it has.
+            Glib::signal_idle().connect_once([this, entry]() { toggleFavourite(entry); });
+        });
+    }
 
     if (isUserPreset(entry)) {
         cardMenu_->addItem("menu-rename", M("PRESET_RENAME"), [this, entry]() {

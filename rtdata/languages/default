@@ -2864,6 +2864,10 @@ PRESETPANEL_BUNDLED;Built-in presets
 PRESETPANEL_HOVER_TOOLTIP;Hover over a preset to preview its effect on the current image
 PRESETPANEL_MYPRESETS;My presets
 PRESET_APPLY;Apply
+PRESET_FAVOURITES;Favourites
+PRESET_FAVOURITE_ADD;Add to favourites
+PRESET_FAVOURITE_REMOVE;Remove from favourites
+PRESET_TECHNICAL;Technical profiles
 PRESET_RENAME;Rename
 PRESET_SAVE_CURRENT;Save current settings
 PRESET_DELETE;Delete

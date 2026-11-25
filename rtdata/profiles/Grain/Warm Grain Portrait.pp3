@@ -1,7 +1,12 @@
 # A portrait stock with its grain left in: soft colour, skin textured not smoothed.
 # Look: owns Film Lab, colour grading and toning, the Lab curves, the Black-and-White
 # switch and the finish tools below. It never sets exposure, white balance, crop or lens
-# corrections. Apply with the fill option off so the rest of the edit is kept.
+# corrections, and the rest of the edit is always kept.
+[Steep Look]
+Version=2
+Kind=look
+Id=grain-warm-grain-portrait
+Family=colour
 
 [Film Presets]
 Enabled=true

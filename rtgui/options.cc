@@ -1463,6 +1463,10 @@ void Options::readFromFile(Glib::ustring fname)
                     filledProfile = keyFile.get_boolean("Profiles", "FilledProfile");
                 }
 
+                if (keyFile.has_key("Profiles", "PresetFavorites")) {
+                    presetFavorites = keyFile.get_string_list("Profiles", "PresetFavorites");
+                }
+
                 if (keyFile.has_key("Profiles", "SaveParamsWithFile")) {
                     saveParamsFile = keyFile.get_boolean("Profiles", "SaveParamsWithFile");
                 }
@@ -3164,6 +3168,10 @@ Glib::ustring Options::serializeKeyFile()
         keyFile.set_string("Profiles", "RawDefault", defProfRaw);
         keyFile.set_string("Profiles", "ImgDefault", defProfImg);
         keyFile.set_boolean("Profiles", "FilledProfile", filledProfile);
+        {
+            Glib::ArrayHandle<Glib::ustring> favs = presetFavorites;
+            keyFile.set_string_list("Profiles", "PresetFavorites", favs);
+        }
         keyFile.set_boolean("Profiles", "SaveParamsWithFile", saveParamsFile);
         keyFile.set_boolean("Profiles", "SaveParamsToCache", saveParamsCache);
         keyFile.set_integer("Profiles", "LoadParamsFromLocation", paramsLoadLocation);

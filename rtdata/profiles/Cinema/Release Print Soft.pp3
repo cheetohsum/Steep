@@ -1,7 +1,12 @@
 # A low-contrast print with long highlight roll-off, made for further grading.
 # Look: owns Film Lab, colour grading and toning, the Lab curves, the Black-and-White
 # switch and the finish tools below. It never sets exposure, white balance, crop or lens
-# corrections. Apply with the fill option off so the rest of the edit is kept.
+# corrections, and the rest of the edit is always kept.
+[Steep Look]
+Version=2
+Kind=look
+Id=cinema-release-print-soft
+Family=print
 
 [Film Presets]
 Enabled=true

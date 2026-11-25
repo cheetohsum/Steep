@@ -79,12 +79,18 @@ def is_mono(look):
     return look.get("bw") or look["stock"] == "silver_gelatin" or look.get("film", {}).get("Process") == "bw"
 
 
-def look_text(look):
+def header(group, look):
+    return ["[Steep Look]", "Version=2", "Kind=look",
+            "Id=%s" % re.sub(r"[^a-z0-9]+", "-", (group + " " + look["name"]).lower()).strip("-"),
+            "Family=%s" % look["family"]]
+
+
+def look_text(group, look):
     out = ["# %s" % look["note"],
            "# Look: owns Film Lab, colour grading and toning, the Lab curves, the Black-and-White",
            "# switch and the finish tools below. It never sets exposure, white balance, crop or lens",
-           "# corrections. Apply with the fill option off so the rest of the edit is kept.",
-           "", "[Film Presets]"]
+           "# corrections, and the rest of the edit is always kept.",
+           ] + header(group, look) + ["", "[Film Presets]"]
     if look["stock"] is None:
         out += ["Enabled=false"]
     else:
@@ -149,10 +155,10 @@ def look_text(look):
     return "\n".join(out) + "\n"
 
 
-def layer_text(look):
+def layer_text(group, look):
     out = ["# %s" % look["note"],
            "# Layer: carries only the sections below, so it stacks on the current look.",
-           "# Apply with the fill option off; it never sets exposure or white balance."]
+           "# It never sets exposure or white balance."] + header(group, look)
     for section, keys in look["layers"].items():
         if section not in LAYER_SECTIONS:
             raise SystemExit("%s: section %s is not a layer section" % (look["name"], section))
@@ -184,6 +190,8 @@ def lint(files):
                 continue
             key, value = line.split("=", 1)
             seen[section][key] = value
+            if section == "Steep Look":
+                continue
             if (section, key) not in known:
                 problems.append("%s: [%s] %s is not a key the engine reads" % (path, section, key))
         film = seen.get("Film Presets")
@@ -198,7 +206,9 @@ def lint(files):
         for name, allowed in ALLOWED_KEYS.items():
             if not set(seen.get(name, {})) <= allowed:
                 problems.append("%s: [%s] carries keys a look may not set" % (path, name))
-        extra = set(seen) - (LOOK_SECTIONS if film else LAYER_SECTIONS)
+        if seen.get("Steep Look", {}).get("Version") != "2" or seen["Steep Look"].get("Kind") != "look":
+            problems.append("%s: missing the look header" % path)
+        extra = set(seen) - {"Steep Look"} - (LOOK_SECTIONS if film else LAYER_SECTIONS)
         if extra:
             problems.append("%s: forbidden sections %s" % (path, sorted(extra)))
     return problems
@@ -215,7 +225,7 @@ def main():
             path = args.out / group / (look["name"] + ".pp3")
             if path in files:
                 raise SystemExit("duplicate name %s" % path)
-            files[path] = layer_text(look) if "layers" in look else look_text(look)
+            files[path] = layer_text(group, look) if "layers" in look else look_text(group, look)
     problems = lint(files)
     for problem in problems:
         print(problem)

@@ -1,7 +1,12 @@
 # Direct flash: hard contrast, hot colour, blue shadows, light falling off to dark corners.
 # Look: owns Film Lab, colour grading and toning, the Lab curves, the Black-and-White
 # switch and the finish tools below. It never sets exposure, white balance, crop or lens
-# corrections. Apply with the fill option off so the rest of the edit is kept.
+# corrections, and the rest of the edit is always kept.
+[Steep Look]
+Version=2
+Kind=look
+Id=editorial-flash-on-camera
+Family=flash
 
 [Film Presets]
 Enabled=true
