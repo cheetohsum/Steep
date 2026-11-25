@@ -2528,6 +2528,9 @@ void DirBrowser::buildPreviewPopover ()
     openButton->set_always_show_image(true);
     openButton->set_relief(Gtk::RELIEF_NONE);
     openButton->set_halign(Gtk::ALIGN_FILL);
+    // Menu-row look with a hover wash (widgets.css): a flat button gives no
+    // sign of which action is under the pointer.
+    openButton->get_style_context()->add_class("folder-menu-action");
     if (auto* label = dynamic_cast<Gtk::Label*>(openButton->get_child())) {
         label->set_xalign(0.f);
     }
@@ -2540,6 +2543,7 @@ void DirBrowser::buildPreviewPopover ()
     starButton_->set_always_show_image(true);
     starButton_->set_relief(Gtk::RELIEF_NONE);
     starButton_->set_halign(Gtk::ALIGN_FILL);
+    starButton_->get_style_context()->add_class("folder-menu-action");
     if (auto* label = dynamic_cast<Gtk::Label*>(starButton_->get_child())) {
         label->set_xalign(0.f);
     }

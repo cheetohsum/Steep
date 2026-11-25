@@ -608,6 +608,27 @@ button.de-chip-selected { border: 2px solid @steep_accent; border-radius: 3px; p
     background-color: alpha(@steep_select, 0.40);
     color: @steep_text_hi;
 }
+/* The folder tree's right-click menu (dirbrowser.cc): its actions are flat
+   buttons inside a popover; give them the same rows and hover wash as the
+   pop-up lists above, so it is clear which one the pointer is on. */
+button.folder-menu-action {
+    padding: 4px 8px;
+    min-height: 20px;
+    border-radius: 6px;
+    border-color: transparent;
+    background-image: none;
+    background-color: transparent;
+    box-shadow: none;
+    color: @steep_text;
+}
+button.folder-menu-action:hover {
+    background-color: alpha(@steep_select, 0.40);
+    color: @steep_text_hi;
+}
+button.folder-menu-action:active {
+    background-color: alpha(@steep_select, 0.60);
+}
+button.folder-menu-action:hover label { color: @steep_text_hi; }
 .SteepPopupList row.separator {
     padding: 3px 0;
     min-height: 0;
