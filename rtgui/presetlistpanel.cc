@@ -725,8 +725,9 @@ void PresetListPanel::toggleFavourite(const ProfileStoreEntry* entry)
     // Written at once: a killed process loses options that were only in memory.
     Options::save();
     cancelHover();
+    // Starring changes no picture: the rebuilt cards take their previews from
+    // the cache (createCard), so nothing is re-rendered and nothing blanks.
     buildContent();
-    queueThumbnailGeneration();
 }
 
 Gtk::Button* PresetListPanel::createCard(const ProfileStoreEntry* entry, bool favouriteCopy)
@@ -740,6 +741,13 @@ Gtk::Button* PresetListPanel::createCard(const ProfileStoreEntry* entry, bool fa
     vbox->set_halign(Gtk::ALIGN_CENTER);
 
     auto* img = Gtk::manage(new RTImage(profileCardIcon(entry), Gtk::ICON_SIZE_LARGE_TOOLBAR));
+    // A card rebuilt for a list change (a favourite, a rename, a new preset)
+    // shows the preview already rendered for it rather than the placeholder
+    // icon until the next render pass reaches it.
+    const auto cached = thumbCache_.find(favouriteKey(entry));
+    if (cached != thumbCache_.end() && cached->second) {
+        img->set(cached->second);
+    }
     img->set_size_request(-1, THUMB_HEIGHT);
     img->set_halign(Gtk::ALIGN_CENTER);
     vbox->pack_start(*img, Gtk::PACK_SHRINK);
@@ -1606,14 +1614,23 @@ void PresetListPanel::revertHoverPreview()
 void PresetListPanel::setThumbnail(::Thumbnail* thm)
 {
     cancelThumbnailGeneration(false);
+    // Another photo: its previews are not this one's. The same photo opened
+    // again (often through a new Thumbnail object, and after the editor
+    // passed null on close) keeps them on screen until the new pass
+    // replaces each one.
+    if (thm && thm->getFileName() != thumbCacheFile_) {
+        thumbCache_.clear();
+        thumbCacheFile_ = thm->getFileName();
+    }
     openThm_ = thm;
-    thumbCache_.clear();
 }
 
 void PresetListPanel::queueThumbnailGeneration()
 {
     cancelThumbnailGeneration(false);
-    thumbCache_.clear();
+    // The previous previews stay up (in the cache and on the cards) until
+    // each one's replacement lands; clearing them here left every card on
+    // its placeholder icon for the 1.2 s start delay and the render pass.
 
     if (!openThm_) {
         return;
@@ -1635,7 +1652,6 @@ void PresetListPanel::queueThumbnailGeneration()
 void PresetListPanel::startThumbnailGeneration()
 {
     cancelThumbnailGeneration(false);
-    thumbCache_.clear();
 
     if (!openThm_) return;
 
@@ -1651,6 +1667,12 @@ void PresetListPanel::startThumbnailGeneration()
     const bool filled = fillMode_->get_active();
     std::vector<const ProfileStoreEntry*> entries;
     collectPresetEntries(entries);
+    // Keys are made here, on the GUI thread, while every entry is current.
+    std::vector<Glib::ustring> keys;
+    keys.reserve(entries.size());
+    for (const auto* entry : entries) {
+        keys.push_back(favouriteKey(entry));
+    }
 
     const unsigned int generation = thumbGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
     thumbCancelled_ = false;
@@ -1658,19 +1680,19 @@ void PresetListPanel::startThumbnailGeneration()
     auto done = thumbThreadDone_;
     thumbnail->increaseRef();
 
-    thumbThread_ = std::thread([this, entries, thumbnail, generation, done, baseline, filled]() {
+    thumbThread_ = std::thread([this, entries, keys, thumbnail, generation, done, baseline, filled]() {
 #ifdef _OPENMP
         // Preset thumbnails are generated serially on this background thread.
         // A nested full OpenMP team competes with the editor and remains
         // allocated after every image switch on Windows.
         omp_set_num_threads(1);
 #endif
-        for (const auto* entry : entries) {
+        for (std::size_t i = 0; i < entries.size(); ++i) {
             if (thumbCancelled_.load(std::memory_order_acquire)
                 || generation != thumbGeneration_.load(std::memory_order_acquire)) {
                 break;
             }
-            generateThumbnail(entry, thumbnail, generation, baseline, filled);
+            generateThumbnail(entries[i], keys[i], thumbnail, generation, baseline, filled);
         }
         thumbnail->decreaseRef();
         done->store(true, std::memory_order_release);
@@ -1710,7 +1732,7 @@ void PresetListPanel::reapThumbnailThreads(bool wait)
     }
 }
 
-void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry, ::Thumbnail* thumbnail,
+void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry, const Glib::ustring& key, ::Thumbnail* thumbnail,
                                       unsigned int generation, const ProcParams& baseline, bool filled)
 {
     if (!thumbnail
@@ -1746,13 +1768,15 @@ void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry, ::Thumbn
 
     const ProfileStoreEntry* capturedEntry = entry;
     std::weak_ptr<std::atomic<bool>> alive = thumbAlive_;
-    Glib::signal_idle().connect_once([this, alive, capturedEntry, pixbufCopy, generation]() {
+    Glib::signal_idle().connect_once([this, alive, capturedEntry, key, pixbufCopy, generation]() {
         const auto live = alive.lock();
         if (live
             && live->load(std::memory_order_acquire)
             && !thumbCancelled_.load(std::memory_order_acquire)
             && generation == thumbGeneration_.load(std::memory_order_acquire)) {
-            thumbCache_[capturedEntry] = pixbufCopy;
+            if (!key.empty()) {
+                thumbCache_[key] = pixbufCopy;
+            }
             auto it = thumbImageMap_.find(capturedEntry);
             if (it != thumbImageMap_.end() && it->second) {
                 it->second->set(pixbufCopy);

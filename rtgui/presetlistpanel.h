@@ -145,8 +145,8 @@ private:
     void startThumbnailGeneration();
     void cancelThumbnailGeneration(bool wait);
     void reapThumbnailThreads(bool wait);
-    void generateThumbnail(const ProfileStoreEntry* entry, ::Thumbnail* thumbnail, unsigned int generation,
-                           const rtengine::procparams::ProcParams& baseline, bool filled);
+    void generateThumbnail(const ProfileStoreEntry* entry, const Glib::ustring& key, ::Thumbnail* thumbnail,
+                           unsigned int generation, const rtengine::procparams::ProcParams& baseline, bool filled);
     void collectPresetEntries(std::vector<const ProfileStoreEntry*>& entries);
 
     // Layout widgets
@@ -196,7 +196,11 @@ private:
 
     // Thumbnail state
     ::Thumbnail* openThm_;
-    std::map<const ProfileStoreEntry*, Glib::RefPtr<Gdk::Pixbuf>> thumbCache_;
+    // Rendered previews by preset path (favouriteKey): store entries are
+    // replaced whenever the preset folders are re-read, the paths are not.
+    std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>> thumbCache_;
+    // The photo those previews were rendered from.
+    Glib::ustring thumbCacheFile_;
     std::thread thumbThread_;
     std::shared_ptr<std::atomic<bool>> thumbThreadDone_;
     struct RetiredThumbThread {
