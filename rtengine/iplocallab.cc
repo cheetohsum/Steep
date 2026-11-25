@@ -49,11 +49,12 @@
 #include "cplx_wavelet_dec.h"
 #include "ciecam02.h"
 #include "polymask.h"
+// Header-only and used by the Mask pane whether or not AI masking is built.
+#include "perceptualbw.h"
+#include "graincharacter.h"
 #ifdef RT_AI_MASKING
 #include "aimaskcache.h"
 #include "masksampling.h"
-#include "perceptualbw.h"
-#include "graincharacter.h"
 #endif
 
 //#define BENCHMARK

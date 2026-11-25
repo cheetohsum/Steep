@@ -67,11 +67,12 @@
 
 #include "aiidlereaper.h"
 #include "memguard.h"
+// Always built: lens blur reads scene depth with or without AI masking.
+#include "partnerdepthstore.h"
 #ifdef RT_AI_MASKING
 #include "aisegmentation.h"
 #include "aimaskcache.h"
 #include "aimaskinput.h"
-#include "partnerdepthstore.h"
 #endif
 
 namespace

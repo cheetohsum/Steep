@@ -39,12 +39,13 @@
 #include "procparams.h"
 #include "aidenoise.h"
 #include "memguard.h"
+// Always built (the memory trimmer below uses it with or without AI masking).
+#include "partnerdepthstore.h"
 #ifdef RT_AI_MASKING
 #include "aisegmentation.h"
 #include "aimaskcache.h"
 #include "aisubjectmodel.h"
 #include "aiinpainting.h"
-#include "partnerdepthstore.h"
 #include "samselector.h"
 #include "airemover.h"
 #include "aimodels.h"

@@ -42,10 +42,11 @@
 #include "procparams.h"
 #include "rawimagesource.h"
 #include "aidenoise.h"
+// Always built: lens blur reads scene depth with or without AI masking.
+#include "partnerdepthstore.h"
 #ifdef RT_AI_MASKING
 #include "aimaskcache.h"
 #include "aimaskinput.h"
-#include "partnerdepthstore.h"
 #endif
 #include "rtengine.h"
 #include "utils.h"
