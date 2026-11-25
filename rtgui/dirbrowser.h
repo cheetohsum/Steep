@@ -33,6 +33,7 @@
 
 class DirTreeView; // Forward declaration for subclass with hover interception
 class FolderNameRenderer; // folder name with its optional strip of photos
+class RTImage;
 
 class DirBrowser : public Gtk::Box
 {
@@ -214,6 +215,13 @@ private:
     bool previewPopoverSyncing_ = false;
     sigc::connection previewApplyConn_;
     Glib::ustring previewMenuDir_;
+    // Stars or unstars the right-clicked folder. The inline star only shows
+    // on the current folder's row, which left no visible way to star one.
+    Gtk::Button* starButton_ = nullptr;
+    // Its two icons, owned here and swapped: a Gtk::manage'd image swapped
+    // out of a button is destroyed on unparent (Linux crash, Windows icon
+    // corruption).
+    std::unique_ptr<RTImage> favoriteIcon_, unfavoriteIcon_;
     void showPreviewMenu (GdkEventButton* event);
     void buildPreviewPopover ();
     void schedulePreviewApply ();

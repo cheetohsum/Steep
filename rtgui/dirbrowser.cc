@@ -2533,6 +2533,23 @@ void DirBrowser::buildPreviewPopover ()
     }
     grid->attach(*openButton, 0, 9, 2, 1);
 
+    starButton_ = Gtk::manage(new Gtk::Button(M("DIRBROWSER_FAVORITE_FOLDER")));
+    favoriteIcon_.reset(new RTImage("star-gold-small", Gtk::ICON_SIZE_BUTTON));
+    unfavoriteIcon_.reset(new RTImage("star-gold-hollow-small", Gtk::ICON_SIZE_BUTTON));
+    starButton_->set_image(*favoriteIcon_);
+    starButton_->set_always_show_image(true);
+    starButton_->set_relief(Gtk::RELIEF_NONE);
+    starButton_->set_halign(Gtk::ALIGN_FILL);
+    if (auto* label = dynamic_cast<Gtk::Label*>(starButton_->get_child())) {
+        label->set_xalign(0.f);
+    }
+    starButton_->set_no_show_all(true);
+    grid->attach(*starButton_, 0, 10, 2, 1);
+    starButton_->signal_clicked().connect([this]() {
+        previewPopover_->popdown();
+        toggleDirFavorite(previewMenuDir_);
+    });
+
     previewSwitch_->property_active().signal_changed().connect([this, sizeLabel, countLabel, ratedLabel]() {
         const bool on = previewSwitch_->get_active();
         sizeLabel->set_sensitive(on);
@@ -2572,6 +2589,18 @@ void DirBrowser::showPreviewMenu (GdkEventButton* event)
         if (auto iter = dirTreeModel->get_iter(path)) {
             previewMenuDir_ = iter->get_value(dtColumns.dirname);
         }
+    }
+
+    // Favorite / Unfavorite the folder that was right-clicked: one button,
+    // its words and icon following the folder's state; hidden on empty space.
+    if (starButton_) {
+        const bool favorite = isDirFavorite(previewMenuDir_);
+        starButton_->set_label(M(favorite ? "DIRBROWSER_UNFAVORITE_FOLDER" : "DIRBROWSER_FAVORITE_FOLDER"));
+        starButton_->set_image(favorite ? *unfavoriteIcon_ : *favoriteIcon_);
+        if (auto* label = dynamic_cast<Gtk::Label*>(starButton_->get_child())) {
+            label->set_xalign(0.f);
+        }
+        starButton_->set_visible(!previewMenuDir_.empty());
     }
 
     const auto& options = App::get().options();
