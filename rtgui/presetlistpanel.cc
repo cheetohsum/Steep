@@ -25,6 +25,7 @@
 #include "paramsedited.h"
 #include "pathutils.h"
 #include "rtimage.h"
+#include "rtscalable.h"
 #include "thumbnail.h"
 
 #include "rtengine/procparams.h"
@@ -39,6 +40,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <set>
 #include <string>
 
 #ifdef _OPENMP
@@ -333,6 +335,28 @@ PresetListPanel::PresetListPanel() :
 
     ProfileStore::getInstance()->addListener(this);
 
+    // Edits made while the list was hidden are caught up when it shows.
+    scrolledWin_->signal_map().connect([this]() {
+        if (previewsStale_) {
+            previewsStale_ = false;
+            queueThumbnailGeneration();
+        }
+    });
+
+    // A theme or DPI change makes every RTImage put its icon back, over the
+    // preview: lay the previews on again once that has happened.
+    {
+        std::weak_ptr<std::atomic<bool>> alive = thumbAlive_;
+        scaleConn_ = RTScalable::connectToChanged([this, alive](double, int) {
+            Glib::signal_idle().connect_once([this, alive]() {
+                const auto live = alive.lock();
+                if (live && live->load(std::memory_order_acquire)) {
+                    reapplyPreviews();
+                }
+            });
+        });
+    }
+
     scrolledWin_->show_all();
 }
 
@@ -356,9 +380,8 @@ PresetListPanel::~PresetListPanel()
 void PresetListPanel::buildContent()
 {
     cardMap_.clear();
-    thumbImageMap_.clear();
     favCardMap_.clear();
-    favThumbMap_.clear();
+    previewImages_.clear();
     categoryHeaders_.clear();
 
     // Clear grid content
@@ -835,10 +858,18 @@ Gtk::Button* PresetListPanel::createCard(const ProfileStoreEntry* entry, bool fa
 
     if (favouriteCopy) {
         favCardMap_[entry] = card;
-        favThumbMap_[entry] = img;
     } else {
         cardMap_[entry] = card;
-        thumbImageMap_[entry] = img;
+    }
+
+    // A rebuilt card shows the preview it had, not the placeholder icon.
+    const Glib::ustring key = favouriteKey(entry);
+    if (!key.empty()) {
+        const auto cached = thumbCache_.find(key);
+        if (cached != thumbCache_.end() && cached->second.pixbuf) {
+            img->set(cached->second.pixbuf);
+        }
+        previewImages_[key].push_back(img);
     }
 
     return card;
@@ -1032,7 +1063,14 @@ void PresetListPanel::procParamsChanged(
     const Glib::ustring& descr,
     const ParamsEdited* paramsEdited)
 {
-    if (ev == EvProfileChanged || ev == EvPhotoLoaded) {
+    if (ev == EvPhotoLoaded) {
+        return;
+    }
+
+    // Previews show each preset over the current edit, so they follow it.
+    refreshPreviewsSoon();
+
+    if (ev == EvProfileChanged) {
         return;
     }
 
@@ -1161,6 +1199,15 @@ void PresetListPanel::setInitialFileName(const Glib::ustring& filename)
 
 void PresetListPanel::storeCurrentValue()
 {
+    // The store is about to replace its entries; the worker holds pointers.
+    cancelThumbnailGeneration(true);
+    // A user preset may have been saved over; render those again (their old
+    // previews stay up meanwhile). Built-in files do not change at run time.
+    for (auto& pair : thumbCache_) {
+        if (pair.first.compare(0, 4, "${U}") == 0) {
+            pair.second.serial = 0;
+        }
+    }
     storedValue_ = getFullPathFromActiveRow();
 
     if (!isCustomSelected() && !isLastSavedSelected()) {
@@ -1215,6 +1262,8 @@ void PresetListPanel::updateProfileList()
     if (lastsaved_) {
         addLastSavedEntry();
     }
+    // Renders only what is missing (a new or renamed preset).
+    queueThumbnailGeneration();
 }
 
 // ============================================================
@@ -1606,14 +1655,17 @@ void PresetListPanel::revertHoverPreview()
 void PresetListPanel::setThumbnail(::Thumbnail* thm)
 {
     cancelThumbnailGeneration(false);
+    if (thm != openThm_ || !thm) {
+        // Another picture: the old previews show the wrong photo.
+        thumbCache_.clear();
+        previewBaselineValid_ = false;
+    }
     openThm_ = thm;
-    thumbCache_.clear();
 }
 
 void PresetListPanel::queueThumbnailGeneration()
 {
     cancelThumbnailGeneration(false);
-    thumbCache_.clear();
 
     if (!openThm_) {
         return;
@@ -1632,10 +1684,35 @@ void PresetListPanel::queueThumbnailGeneration()
     }, THUMB_START_DELAY_MS, G_PRIORITY_LOW);
 }
 
+void PresetListPanel::refreshPreviewsSoon()
+{
+    if (!openThm_) {
+        return;
+    }
+    if (scrolledWin_->get_mapped()) {
+        // Restarts the settle timer, so a slider drag renders once at the end.
+        queueThumbnailGeneration();
+    } else {
+        previewsStale_ = true;
+    }
+}
+
+void PresetListPanel::reapplyPreviews()
+{
+    for (const auto& pair : previewImages_) {
+        const auto cached = thumbCache_.find(pair.first);
+        if (cached == thumbCache_.end() || !cached->second.pixbuf) {
+            continue;
+        }
+        for (auto* img : pair.second) {
+            img->set(cached->second.pixbuf);
+        }
+    }
+}
+
 void PresetListPanel::startThumbnailGeneration()
 {
     cancelThumbnailGeneration(false);
-    thumbCache_.clear();
 
     if (!openThm_) return;
 
@@ -1649,8 +1726,22 @@ void PresetListPanel::startThumbnailGeneration()
         baseline = thumbnail->getProcParamsCopy();
     }
     const bool filled = fillMode_->get_active();
-    std::vector<const ProfileStoreEntry*> entries;
-    collectPresetEntries(entries);
+
+    // New inputs get a new serial; previews made from the old ones stay up
+    // until their replacements land. Same inputs: only the missing ones.
+    if (!previewBaselineValid_ || filled != previewFilled_ || baseline != previewBaseline_) {
+        previewBaseline_ = baseline;
+        previewFilled_ = filled;
+        previewBaselineValid_ = true;
+        ++previewSerial_;
+    }
+    const unsigned int serial = previewSerial_;
+
+    std::vector<PreviewJob> jobs;
+    collectPresetEntries(jobs, serial);
+    if (jobs.empty()) {
+        return;
+    }
 
     const unsigned int generation = thumbGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
     thumbCancelled_ = false;
@@ -1658,19 +1749,19 @@ void PresetListPanel::startThumbnailGeneration()
     auto done = thumbThreadDone_;
     thumbnail->increaseRef();
 
-    thumbThread_ = std::thread([this, entries, thumbnail, generation, done, baseline, filled]() {
+    thumbThread_ = std::thread([this, jobs, thumbnail, generation, serial, done, baseline, filled]() {
 #ifdef _OPENMP
         // Preset thumbnails are generated serially on this background thread.
         // A nested full OpenMP team competes with the editor and remains
         // allocated after every image switch on Windows.
         omp_set_num_threads(1);
 #endif
-        for (const auto* entry : entries) {
+        for (const auto& job : jobs) {
             if (thumbCancelled_.load(std::memory_order_acquire)
                 || generation != thumbGeneration_.load(std::memory_order_acquire)) {
                 break;
             }
-            generateThumbnail(entry, thumbnail, generation, baseline, filled);
+            generateThumbnail(job, thumbnail, generation, serial, baseline, filled);
         }
         thumbnail->decreaseRef();
         done->store(true, std::memory_order_release);
@@ -1710,8 +1801,8 @@ void PresetListPanel::reapThumbnailThreads(bool wait)
     }
 }
 
-void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry, ::Thumbnail* thumbnail,
-                                      unsigned int generation, const ProcParams& baseline, bool filled)
+void PresetListPanel::generateThumbnail(const PreviewJob& job, ::Thumbnail* thumbnail, unsigned int generation,
+                                        unsigned int serial, const ProcParams& baseline, bool filled)
 {
     if (!thumbnail
         || thumbCancelled_.load(std::memory_order_acquire)
@@ -1719,7 +1810,7 @@ void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry, ::Thumbn
         return;
     }
 
-    const PartialProfile* profile = ProfileStore::getInstance()->getProfile(entry);
+    const PartialProfile* profile = ProfileStore::getInstance()->getProfile(job.entry);
     if (!profile) return;
 
     ProcParams merged = baseline;
@@ -1744,32 +1835,58 @@ void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry, ::Thumbn
     auto pixbufCopy = pixbuf->copy();
     delete img;
 
-    const ProfileStoreEntry* capturedEntry = entry;
+    const Glib::ustring key = job.key;
     std::weak_ptr<std::atomic<bool>> alive = thumbAlive_;
-    Glib::signal_idle().connect_once([this, alive, capturedEntry, pixbufCopy, generation]() {
+    Glib::signal_idle().connect_once([this, alive, key, pixbufCopy, generation, serial]() {
         const auto live = alive.lock();
         if (live
             && live->load(std::memory_order_acquire)
             && !thumbCancelled_.load(std::memory_order_acquire)
             && generation == thumbGeneration_.load(std::memory_order_acquire)) {
-            thumbCache_[capturedEntry] = pixbufCopy;
-            auto it = thumbImageMap_.find(capturedEntry);
-            if (it != thumbImageMap_.end() && it->second) {
-                it->second->set(pixbufCopy);
-            }
-            auto fav = favThumbMap_.find(capturedEntry);
-            if (fav != favThumbMap_.end() && fav->second) {
-                fav->second->set(pixbufCopy);
+            auto& cached = thumbCache_[key];
+            cached.pixbuf = pixbufCopy;
+            cached.serial = serial;
+            const auto images = previewImages_.find(key);
+            if (images != previewImages_.end()) {
+                for (auto* image : images->second) {
+                    image->set(pixbufCopy);
+                }
             }
         }
     });
 }
 
-void PresetListPanel::collectPresetEntries(std::vector<const ProfileStoreEntry*>& entries)
+void PresetListPanel::collectPresetEntries(std::vector<PreviewJob>& jobs, unsigned int serial)
 {
-    for (const auto& pair : cardMap_) {
-        entries.push_back(pair.first);
+    // Favourites, then cards in open groups, then the rest.
+    std::vector<PreviewJob> later;
+    std::set<const ProfileStoreEntry*> seen;
+    const auto add = [&](const ProfileStoreEntry* entry, bool onScreen) {
+        if (!seen.insert(entry).second) {
+            return;
+        }
+        PreviewJob job{entry, favouriteKey(entry)};
+        if (job.key.empty()) {
+            return;
+        }
+        const auto cached = thumbCache_.find(job.key);
+        if (cached != thumbCache_.end() && cached->second.pixbuf && cached->second.serial == serial) {
+            return;
+        }
+        (onScreen ? jobs : later).push_back(std::move(job));
+    };
+    for (const auto& pair : favCardMap_) {
+        add(pair.first, true);
     }
+    for (const auto& pair : cardMap_) {
+        if (pair.second && pair.second->get_mapped()) {
+            add(pair.first, true);
+        }
+    }
+    for (const auto& pair : cardMap_) {
+        add(pair.first, false);
+    }
+    jobs.insert(jobs.end(), later.begin(), later.end());
 }
 
 // ============================================================
