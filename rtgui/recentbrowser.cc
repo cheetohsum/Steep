@@ -73,6 +73,11 @@ void RecentBrowser::popupMenuAt (Gtk::Widget& anchor)
     if (!listPopover_ || listAnchor_ != &anchor) {
         listPopover_.reset(new steepui::ListPopover(anchor));
         listAnchor_ = &anchor;
+        // Nothing is chosen in this list until the pointer or the keys pick a
+        // row. The shared list's browse mode always keeps one row selected,
+        // and selection wears the hover wash: the first row looked hovered
+        // whatever the pointer was on.
+        listPopover_->list().set_selection_mode(Gtk::SELECTION_SINGLE);
     }
     if (listPopover_->get_visible()) {
         return;   // hover and click can both ask while it is already open
@@ -112,9 +117,9 @@ void RecentBrowser::popupMenuAt (Gtk::Widget& anchor)
         }
     }
 
-    list.list().unselect_all();
     list.show_all();
     list.popup();
+    list.list().unselect_all();
 }
 
 void RecentBrowser::selectRecent(Glib::ustring dirname)
