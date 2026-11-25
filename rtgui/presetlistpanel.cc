@@ -455,61 +455,12 @@ void PresetListPanel::buildContent()
         Glib::ustring folderPath(ProfileStore::getInstance()->getPathFromId(entry->folderId));
         if (App::get().options().useBundledProfiles ||
             ((folderPath != "${G}") && (folderPath != "${U}"))) {
-            // Animated category with Revealer
-            auto* catBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
-            catBox->get_style_context()->add_class("preset-category");
-
-            auto* headerEvBox = Gtk::manage(new Gtk::EventBox());
-            headerEvBox->get_style_context()->add_class("preset-category-header");
-            auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-            auto* arrowImage = Gtk::manage(new RTImage("expander-open-small", Gtk::ICON_SIZE_MENU));
-            auto* categoryImage = Gtk::manage(new RTImage(profileCategoryIcon(entry), Gtk::ICON_SIZE_MENU));
-            auto* nameLabel = Gtk::manage(new Gtk::Label(entry->label));
-            nameLabel->get_style_context()->add_class("preset-category-label");
-            nameLabel->set_xalign(0.0);
-            headerRow->pack_start(*arrowImage, Gtk::PACK_SHRINK);
-            headerRow->pack_start(*categoryImage, Gtk::PACK_SHRINK);
-            headerRow->pack_start(*nameLabel, Gtk::PACK_EXPAND_WIDGET);
-            headerEvBox->add(*headerRow);
-
-            auto* revealer = Gtk::manage(new Gtk::Revealer());
-            revealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-            steep::motion::configureRevealer(*revealer);
-
-            bool expanded = true;
-            auto expIt = categoryExpanded_.find(entry->folderId);
-            if (expIt != categoryExpanded_.end()) {
-                expanded = expIt->second;
-            }
-            revealer->set_reveal_child(expanded);
-            arrowImage->set_from_icon_name(expanded ? "expander-open-small" : "expander-closed-small");
-            categoryExpanded_[entry->folderId] = expanded;
-
-            int folderId = entry->folderId;
-            headerEvBox->signal_button_press_event().connect(
-                [this, revealer, arrowImage, folderId](GdkEventButton* event) -> bool {
-                    if (event->button == 1) {
-                        bool nowExpanded = !revealer->get_reveal_child();
-                        revealer->set_reveal_child(nowExpanded);
-                        arrowImage->set_from_icon_name(nowExpanded ? "expander-open-small" : "expander-closed-small");
-                        categoryExpanded_[folderId] = nowExpanded;
-                        return true;
-                    }
-                    if (event->button == 3) {
-                        showGroupContextMenu(event, folderId);
-                        return true;
-                    }
-                    return false;
-                }, false);
-
-            auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
-            revealer->add(*box);
-            catBox->pack_start(*headerEvBox, Gtk::PACK_SHRINK);
-            catBox->pack_start(*revealer, Gtk::PACK_SHRINK);
-
+            // The two wrappers (built-in, the user's own) start open; every
+            // group inside them starts shut.
+            const bool wrapper = folderPath == "${G}" || folderPath == "${U}";
+            auto* box = addCategory(gridBox_, entry->label, profileCategoryIcon(entry),
+                                    entry->folderId, wrapper, true, 0);
             buildCategoryContent(box, entry->folderId, entryList);
-            gridBox_->pack_start(*catBox, Gtk::PACK_SHRINK);
-            categoryHeaders_[folderId] = headerEvBox;
         } else {
             // Skip ${G}/${U} wrapper, promote children to parent level
             buildCategoryContent(gridBox_, entry->folderId, entryList);
@@ -582,60 +533,9 @@ void PresetListPanel::buildCategoryContent(
 
         if (App::get().options().useBundledProfiles ||
             ((folderPath != "${G}") && (folderPath != "${U}"))) {
-            auto* catBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
-            catBox->get_style_context()->add_class("preset-category");
-
-            auto* headerEvBox = Gtk::manage(new Gtk::EventBox());
-            headerEvBox->get_style_context()->add_class("preset-category-header");
-            auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-            auto* arrowImage = Gtk::manage(new RTImage("expander-open-small", Gtk::ICON_SIZE_MENU));
-            auto* categoryImage = Gtk::manage(new RTImage(profileCategoryIcon(folder), Gtk::ICON_SIZE_MENU));
-            auto* nameLabel = Gtk::manage(new Gtk::Label(folder->label));
-            nameLabel->get_style_context()->add_class("preset-category-label");
-            nameLabel->set_xalign(0.0);
-            headerRow->pack_start(*arrowImage, Gtk::PACK_SHRINK);
-            headerRow->pack_start(*categoryImage, Gtk::PACK_SHRINK);
-            headerRow->pack_start(*nameLabel, Gtk::PACK_EXPAND_WIDGET);
-            headerEvBox->add(*headerRow);
-
-            auto* revealer = Gtk::manage(new Gtk::Revealer());
-            revealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-            steep::motion::configureRevealer(*revealer);
-
-            bool expanded = true;
-            auto expIt = categoryExpanded_.find(folder->folderId);
-            if (expIt != categoryExpanded_.end()) {
-                expanded = expIt->second;
-            }
-            revealer->set_reveal_child(expanded);
-            arrowImage->set_from_icon_name(expanded ? "expander-open-small" : "expander-closed-small");
-            categoryExpanded_[folder->folderId] = expanded;
-
-            int folderId = folder->folderId;
-            headerEvBox->signal_button_press_event().connect(
-                [this, revealer, arrowImage, folderId](GdkEventButton* event) -> bool {
-                    if (event->button == 1) {
-                        bool nowExpanded = !revealer->get_reveal_child();
-                        revealer->set_reveal_child(nowExpanded);
-                        arrowImage->set_from_icon_name(nowExpanded ? "expander-open-small" : "expander-closed-small");
-                        categoryExpanded_[folderId] = nowExpanded;
-                        return true;
-                    }
-                    if (event->button == 3) {
-                        showGroupContextMenu(event, folderId);
-                        return true;
-                    }
-                    return false;
-                }, false);
-
-            auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
-            revealer->add(*box);
-            catBox->pack_start(*headerEvBox, Gtk::PACK_SHRINK);
-            catBox->pack_start(*revealer, Gtk::PACK_SHRINK);
-
+            auto* box = addCategory(parent, folder->label, profileCategoryIcon(folder),
+                                    folder->folderId, false, true, 2);
             buildCategoryContent(box, folder->folderId, entryList);
-            parent->pack_start(*catBox, Gtk::PACK_SHRINK);
-            categoryHeaders_[folderId] = headerEvBox;
         } else {
             // Skip ${G}/${U} wrapper, promote children to parent level
             buildCategoryContent(parent, folder->folderId, entryList);
@@ -664,52 +564,134 @@ void PresetListPanel::buildCategoryContent(
 Gtk::Box* PresetListPanel::addVirtualCategory(Gtk::Box* parent, const Glib::ustring& label, const Glib::ustring& icon,
                                               int key, bool expandedByDefault)
 {
+    return addCategory(parent, label, icon, key, expandedByDefault, false, 2);
+}
+
+namespace
+{
+
+// The fold arrow of a group: points right when shut, turns down as it opens.
+class FoldChevron final : public Gtk::DrawingArea
+{
+public:
+    FoldChevron()
+    {
+        set_size_request(12, 12);
+        set_valign(Gtk::ALIGN_CENTER);
+    }
+
+    void setFraction(double fraction)
+    {
+        fraction_ = fraction;
+        queue_draw();
+    }
+
+protected:
+    bool on_draw(const Cairo::RefPtr<Cairo::Context>& cr) override
+    {
+        const auto style = get_style_context();
+        const Gdk::RGBA fg = style->get_color(style->get_state());
+        cr->translate(get_allocated_width() / 2.0, get_allocated_height() / 2.0);
+        cr->rotate(fraction_ * 1.5707963267948966);
+        cr->set_source_rgba(fg.get_red(), fg.get_green(), fg.get_blue(), fg.get_alpha() * 0.75);
+        cr->set_line_width(1.5);
+        cr->set_line_cap(Cairo::LINE_CAP_ROUND);
+        cr->set_line_join(Cairo::LINE_JOIN_ROUND);
+        cr->move_to(-1.75, -3.5);
+        cr->line_to(1.75, 0.0);
+        cr->line_to(-1.75, 3.5);
+        cr->stroke();
+        return true;
+    }
+
+private:
+    double fraction_ = 0.0;
+};
+
+struct FoldState {
+    double fraction = 0.0;
+    steep::motion::Handle handle;
+};
+
+}
+
+Gtk::Box* PresetListPanel::addCategory(Gtk::Box* parent, const Glib::ustring& label, const Glib::ustring& icon,
+                                       int key, bool expandedByDefault, bool isFolder, int spacing)
+{
     auto* catBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
     catBox->get_style_context()->add_class("preset-category");
 
     auto* headerEvBox = Gtk::manage(new Gtk::EventBox());
     headerEvBox->get_style_context()->add_class("preset-category-header");
     auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-    auto* arrowImage = Gtk::manage(new RTImage("expander-open-small", Gtk::ICON_SIZE_MENU));
+    auto* chevron = Gtk::manage(new FoldChevron());
     auto* categoryImage = Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_MENU));
     auto* nameLabel = Gtk::manage(new Gtk::Label(label));
     nameLabel->get_style_context()->add_class("preset-category-label");
     nameLabel->set_xalign(0.0);
-    headerRow->pack_start(*arrowImage, Gtk::PACK_SHRINK);
+    headerRow->pack_start(*chevron, Gtk::PACK_SHRINK);
     headerRow->pack_start(*categoryImage, Gtk::PACK_SHRINK);
     headerRow->pack_start(*nameLabel, Gtk::PACK_EXPAND_WIDGET);
     headerEvBox->add(*headerRow);
 
     auto* revealer = Gtk::manage(new Gtk::Revealer());
     revealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    steep::motion::configureRevealer(*revealer);
+    steep::motion::configureRevealer(*revealer, steep::motion::Duration::Large);
 
+    auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, spacing));
+    revealer->add(*box);
+
+    // Groups start shut unless the caller says otherwise; what the user
+    // opens stays open across rebuilds of the list.
     bool expanded = expandedByDefault;
     const auto expIt = categoryExpanded_.find(key);
     if (expIt != categoryExpanded_.end()) {
         expanded = expIt->second;
     }
-    revealer->set_reveal_child(expanded);
-    arrowImage->set_from_icon_name(expanded ? "expander-open-small" : "expander-closed-small");
     categoryExpanded_[key] = expanded;
+    revealer->set_reveal_child(expanded);
+
+    const auto fold = std::make_shared<FoldState>();
+    fold->fraction = expanded ? 1.0 : 0.0;
+    chevron->setFraction(fold->fraction);
+    box->set_opacity(fold->fraction);
 
     headerEvBox->signal_button_press_event().connect(
-        [this, revealer, arrowImage, key](GdkEventButton* event) -> bool {
-            if (event->button != 1) {
-                return false;
+        [this, revealer, chevron, box, fold, key, isFolder](GdkEventButton* event) -> bool {
+            if (event->button == 1) {
+                const bool nowExpanded = !revealer->get_reveal_child();
+                categoryExpanded_[key] = nowExpanded;
+
+                // The sheet slides while its contents fade and the arrow
+                // turns; closing is quicker than opening.
+                const auto token = steep::motion::Duration::Large;
+                revealer->set_transition_duration(
+                    nowExpanded ? steep::motion::ms(token) : steep::motion::exitMs(token));
+                revealer->set_reveal_child(nowExpanded);
+
+                FoldState* const state = fold.get();
+                state->handle = steep::motion::toggle(
+                    *chevron, state->fraction, nowExpanded, token,
+                    [state, chevron, box](double fraction) {
+                        state->fraction = fraction;
+                        chevron->setFraction(fraction);
+                        box->set_opacity(fraction);
+                    });
+                return true;
             }
-            const bool nowExpanded = !revealer->get_reveal_child();
-            revealer->set_reveal_child(nowExpanded);
-            arrowImage->set_from_icon_name(nowExpanded ? "expander-open-small" : "expander-closed-small");
-            categoryExpanded_[key] = nowExpanded;
-            return true;
+            if (event->button == 3 && isFolder) {
+                showGroupContextMenu(event, key);
+                return true;
+            }
+            return false;
         }, false);
 
-    auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
-    revealer->add(*box);
     catBox->pack_start(*headerEvBox, Gtk::PACK_SHRINK);
     catBox->pack_start(*revealer, Gtk::PACK_SHRINK);
     parent->pack_start(*catBox, Gtk::PACK_SHRINK);
+    if (isFolder) {
+        categoryHeaders_[key] = headerEvBox;
+    }
     return box;
 }
 

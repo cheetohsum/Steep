@@ -112,6 +112,10 @@ private:
     // A collapsible group that is not a folder on disk (Favourites, Technical).
     Gtk::Box* addVirtualCategory(Gtk::Box* parent, const Glib::ustring& label, const Glib::ustring& icon,
                                  int key, bool expandedByDefault);
+    // Every collapsible group is built here: header with a turning arrow,
+    // sliding and fading contents. Returns the box to fill.
+    Gtk::Box* addCategory(Gtk::Box* parent, const Glib::ustring& label, const Glib::ustring& icon,
+                          int key, bool expandedByDefault, bool isFolder, int spacing);
     Glib::ustring favouriteKey(const ProfileStoreEntry* entry) const;
     bool isFavourite(const ProfileStoreEntry* entry) const;
     void toggleFavourite(const ProfileStoreEntry* entry);
