@@ -816,13 +816,20 @@ void BatchQueue::finishPendingWrite_()
     }
 
     if (pendingWriteError_ && !pendingWriteError_->empty() && listener) {
-        // Same report error() gives; the job itself is long gone.
+        // Same report error() gives; the job itself is long gone. The real
+        // queue size, as there: reporting 0 disabled the Export Queue button
+        // while photos were still waiting.
         BatchQueueListener* const bql = listener;
         const Glib::ustring descr = *pendingWriteError_;
+        int qsize = 0;
+        {
+            MYREADERLOCK(l, entryRW);
+            qsize = fd.size();
+        }
         idle_register.add(
-            [bql, descr]() -> bool
+            [bql, descr, qsize]() -> bool
             {
-                bql->queueSizeChanged(0, false, true, descr);
+                bql->queueSizeChanged(qsize, false, true, descr);
                 return false;
             }
         );
