@@ -99,6 +99,12 @@ private:
     Glib::RefPtr<Gtk::ListStore> store_;
     Gtk::TreeView* view_ = nullptr;
     Gtk::ProgressBar* progress_ = nullptr;
+    // Pulses the bar while the scan cannot yet say how far it is (loading
+    // its date index, walking the starred places): seconds on slow drives,
+    // during which a bar at zero looked like nothing was happening.
+    sigc::connection pulseConn_;
+    void startPulse (const Glib::ustring& text);
+    void stopPulse ();
     Gtk::Label* summary_ = nullptr;
     Gtk::Label* empty_ = nullptr;
     Gtk::Button* moveBtn_ = nullptr;

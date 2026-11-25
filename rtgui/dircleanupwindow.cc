@@ -652,7 +652,25 @@ void DirCleanupWindow::showThumbs ()
 
 DirCleanupWindow::~DirCleanupWindow ()
 {
+    pulseConn_.disconnect();
     ++state_->generation;
+}
+
+void DirCleanupWindow::startPulse (const Glib::ustring& text)
+{
+    progress_->set_text(text);
+    progress_->pulse();
+    if (!pulseConn_.connected()) {
+        pulseConn_ = Glib::signal_timeout().connect([this]() {
+            progress_->pulse();
+            return true;
+        }, 120);
+    }
+}
+
+void DirCleanupWindow::stopPulse ()
+{
+    pulseConn_.disconnect();
 }
 
 bool DirCleanupWindow::on_delete_event (GdkEventAny*)
@@ -745,7 +763,8 @@ void DirCleanupWindow::startScan ()
     setBusy(true);
     progress_->show();
     progress_->set_fraction(0.0);
-    progress_->set_text("");
+    progress_->set_pulse_step(0.08);
+    startPulse(M("DIRCLEANUP_FINDING"));
     stack_->set_visible_child("list");
 
     std::set<std::string> exts;
@@ -774,6 +793,24 @@ void DirCleanupWindow::startScan ()
         {
             std::lock_guard<std::mutex> lock(st->mutex);
             st->total = static_cast<int>(folders.size());
+        }
+        {
+            // Still no fraction to show until the first folder is read; say
+            // what is being worked on, and keep pulsing.
+            const int found = static_cast<int>(folders.size());
+            Glib::signal_idle().connect_once([st, gen, self, found]() {
+                if (gen != st->generation || instance != self) {
+                    return;
+                }
+                int done = 0;
+                {
+                    std::lock_guard<std::mutex> lock(st->mutex);
+                    done = st->done;
+                }
+                if (done == 0) {
+                    self->startPulse(Glib::ustring::compose(M("DIRCLEANUP_READINGFOLDERS"), found));
+                }
+            });
         }
 
         // Dates: the index, then the thumbnail cache, then the file's own Exif.
@@ -845,10 +882,18 @@ void DirCleanupWindow::startScan ()
                     if (gen != st->generation || instance != self) {
                         return;
                     }
+                    self->stopPulse();
                     self->progress_->set_fraction(total ? double(done) / total : 1.0);
-                    self->progress_->set_text(Glib::ustring::compose("%1 / %2", done, total));
+                    self->progress_->set_text(Glib::ustring::compose(M("DIRCLEANUP_READINGPROGRESS"), done, total));
                     if (last) {
-                        self->scanFinished();
+                        // Working out the suggestions runs here on the GUI
+                        // thread; let the bar say so before it starts.
+                        self->progress_->set_text(M("DIRCLEANUP_SUGGESTING"));
+                        Glib::signal_timeout().connect_once([st, gen, self]() {
+                            if (gen == st->generation && instance == self) {
+                                self->scanFinished();
+                            }
+                        }, 30);
                     }
                 });
             });
@@ -858,6 +903,7 @@ void DirCleanupWindow::startScan ()
 
 void DirCleanupWindow::scanFinished ()
 {
+    stopPulse();
     progress_->hide();
     {
         std::lock_guard<std::mutex> lock(state_->mutex);

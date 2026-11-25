@@ -114,6 +114,7 @@ DIRCLEANUP_CLEARPREF;Clear preference
 DIRCLEANUP_CREATES;Creates a new folder:
 DIRCLEANUP_CROSSDRIVE;Other drive
 DIRCLEANUP_DESELECTALL;Deselect all
+DIRCLEANUP_FINDING;Finding folders in your starred places…
 DIRCLEANUP_DUPLICATE;Already there. Clearing moves over anything only this copy has, then sends this copy to the Recycle Bin.
 DIRCLEANUP_DUP_ALSOIN;Also in:
 DIRCLEANUP_DUP_EDITSDIFFER;Different edits: %1
@@ -133,6 +134,8 @@ DIRCLEANUP_OPENOTHER;Open other copy
 DIRCLEANUP_PREFER;Always prefer %1
 DIRCLEANUP_PREFERRING;Preferring edits from %1
 DIRCLEANUP_NOPLACES;Star folders in Places to clean them up
+DIRCLEANUP_READINGFOLDERS;Reading photo dates in %1 folders…
+DIRCLEANUP_READINGPROGRESS;Reading photo dates: %1 of %2 folders
 DIRCLEANUP_REASON_DATE;Capture date
 DIRCLEANUP_REASON_NAME;Date in file name
 DIRCLEANUP_REASON_SEQ;Capture date and file numbering
@@ -140,6 +143,7 @@ DIRCLEANUP_RESCAN;Rescan
 DIRCLEANUP_SELECTALL;Select all
 DIRCLEANUP_SELECTDUPS;Select duplicates
 DIRCLEANUP_SELECTSUGGESTED;Select suggested
+DIRCLEANUP_SUGGESTING;Working out suggestions…
 DIRCLEANUP_TITLE;Directory cleanup
 DIRCLEANUP_UNRESOLVED;%1 with different edits
 DIRCLEANUP_UNDO;Undo
