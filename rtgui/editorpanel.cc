@@ -72,6 +72,7 @@ bool isPreviewPassBusy(StagedImageProcessor* processor);
 #include "procparamchangers.h"
 #include "placesbrowser.h"
 #include "recentbrowser.h"
+#include "dircleanupwindow.h"
 #include "pathutils.h"
 #include "cachemanager.h"
 #include "rawloadactivity.h"
@@ -1187,7 +1188,16 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     auto* browseIcon = Gtk::manage(new RTImage("folder-open-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
     browseButton->set_image(*browseIcon);
     browseButton->set_always_show_image(true);
-    browseButton->signal_clicked().connect(sigc::mem_fun(*editorDirBrowser_, &DirBrowser::browseForFolder));
+    // The same menu as the file browser's folder icon, on click and hover:
+    // browse, Directory cleanup, then the recent folders.
+    editorRecentBrowser_->setLeadingActions({
+        {M("DIRBROWSER_BROWSE"), [this]() { editorDirBrowser_->browseForFolder(); }},
+        {M("DIRCLEANUP_TITLE"), [this]() { DirCleanupWindow::open(dynamic_cast<Gtk::Window*>(get_toplevel())); }},
+    });
+    browseButton->signal_clicked().connect([this, browseButton]() {
+        editorRecentHoverTimer_.disconnect();
+        editorRecentBrowser_->popupMenuAt(*browseButton);
+    });
 
     // Hovering the folder icon opens the recent-folders menu after a short
     // delay; the popup runs from the timer callback, never the enter handler.

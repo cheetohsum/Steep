@@ -2610,15 +2610,17 @@ FilePanel::FilePanel () :
     auto* browseIcon = Gtk::manage(new RTImage("folder-open-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
     browseButton->set_image(*browseIcon);
     browseButton->set_always_show_image(true);
-    // Click: browse, or tidy the starred places into their month folders.
-    folderMenu_ = std::make_unique<steepui::PopupMenu>();
-    folderMenu_->addItem(M("DIRBROWSER_BROWSE"), [this]() { dirBrowser->browseForFolder(); });
-    folderMenu_->addItem(M("DIRCLEANUP_TITLE"), [this]() {
-        DirCleanupWindow::open(dynamic_cast<Gtk::Window*>(get_toplevel()));
+    // One menu for hover and click: browse, tidy the starred places into
+    // their month folders, then the recent folders. It used to be two menus,
+    // and the recent-folders one opened on hover before a click could reach
+    // the other -- the cleanup tool was effectively out of reach.
+    recentBrowser->setLeadingActions({
+        {M("DIRBROWSER_BROWSE"), [this]() { dirBrowser->browseForFolder(); }},
+        {M("DIRCLEANUP_TITLE"), [this]() { DirCleanupWindow::open(dynamic_cast<Gtk::Window*>(get_toplevel())); }},
     });
     browseButton->signal_clicked().connect([this, browseButton]() {
         recentHoverTimer_.disconnect();
-        folderMenu_->popupAtWidget(*browseButton);
+        recentBrowser->popupMenuAt(*browseButton);
     });
     DirCleanupWindow::filesMoved().connect([this]() {
         if (fileCatalog) {

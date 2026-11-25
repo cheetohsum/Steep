@@ -47,6 +47,13 @@ void RecentBrowser::rebuildMenu()
 {
     recentPopup_->clear();
 
+    for (const auto& action : leadingActions_) {
+        recentPopup_->addItem(action.first, action.second);
+    }
+    if (!leadingActions_.empty()) {
+        recentPopup_->addSeparator();
+    }
+
     const auto& folders = App::get().options().recentFolders;
 
     if (folders.empty()) {

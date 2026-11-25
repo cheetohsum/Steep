@@ -23,7 +23,10 @@
 #include "guiutils.h"
 #include "steeppopup.h"
 
+#include <functional>
 #include <memory>
+#include <utility>
+#include <vector>
 
 class RecentBrowser :
     public Gtk::Box
@@ -35,6 +38,9 @@ private:
     Gtk::MenuButton* recentButton;
     std::unique_ptr<steepui::PopupMenu> recentPopup_;
     DirSelectionSlot selectDir;
+    // Shown above the recent folders (Browse, Directory cleanup): this menu is
+    // what the folder icon opens, on hover and on click.
+    std::vector<std::pair<Glib::ustring, std::function<void()>>> leadingActions_;
 
     void rebuildMenu();
     void selectRecent(Glib::ustring dirname);
@@ -44,6 +50,12 @@ public:
     RecentBrowser ();
 
     void setDirSelector (const DirSelectionSlot& selectDir);
+
+    void setLeadingActions (std::vector<std::pair<Glib::ustring, std::function<void()>>> actions)
+    {
+        leadingActions_ = std::move(actions);
+        rebuildMenu();
+    }
 
     void dirSelected (const Glib::ustring& dirname, const Glib::ustring& openfile);
 

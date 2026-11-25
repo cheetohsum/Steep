@@ -148,7 +148,6 @@ private:
     PlacesBrowser* placesBrowser;
     RecentBrowser* recentBrowser;
     AlbumBrowser* albumBrowser_;
-    std::unique_ptr<steepui::PopupMenu> folderMenu_;   // folder icon: browse / directory cleanup
     sigc::connection recentHoverTimer_;    // hover-to-open delay for the recent-folders menu
     sigc::connection favoritesRefreshConn_;
     Gtk::Widget* fastExportSettingsWidget_ = nullptr;
