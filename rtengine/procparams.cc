@@ -7813,6 +7813,14 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                     pedited->filmPresets.modelVersion = false;
                 }
             }
+            // An older model is kept so that an existing film look does not
+            // change under the user. With the film stage off there is no look
+            // to keep: switching it on later starts from the current model,
+            // not the one that was current when the sidecar was first written
+            // (a July sidecar reopened today showed Film Lab as v2).
+            if (!filmPresets.enabled && filmPresets.modelVersion < FilmPresetsParams().modelVersion) {
+                filmPresets.modelVersion = FilmPresetsParams().modelVersion;
+            }
             assignFromKeyfile(keyFile, "Film Presets", "Exposure", filmPresets.exposure, pedited->filmPresets.exposure);
             assignFromKeyfile(keyFile, "Film Presets", "PrintExposure", filmPresets.printExposure, pedited->filmPresets.printExposure);
             assignFromKeyfile(keyFile, "Film Presets", "PushPull", filmPresets.pushPull, pedited->filmPresets.pushPull);
