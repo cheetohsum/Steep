@@ -2001,7 +2001,11 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     beforeAfterBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL));
     beforeAfterBox->set_name ("BeforeAfterContainer");
-    beforeAfterBox->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
+    // The editor's own left-sidebar setting, not showHistory (the file
+    // browser's left panel): when the two disagree and the editor sidebar
+    // starts hidden, it is never allocated, nothing corrects this inset, and
+    // an empty sidebar-sized gap is left beside the picture.
+    beforeAfterBox->set_margin_start(options.editorShowLeftSidebar ? options.dirBrowserWidth : 0);
     beforeAfterBox->set_margin_end(editorToolPanelInsetWidth());
     beforeAfterBox->pack_start (*afterBox);
 
@@ -2009,7 +2013,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     stb1->set_name("EditorToolbarTop");
     stb1->add(*toolBarPanel);
     // Offset toolbar from sidebars so buttons aren't hidden by the overlay
-    stb1->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
+    stb1->set_margin_start(options.editorShowLeftSidebar ? options.dirBrowserWidth : 0);
     stb1->set_margin_end(editorToolPanelInsetWidth());
     editbox->pack_start (*stb1, Gtk::PACK_SHRINK, 0);
     editorToolbarTop_ = stb1;
@@ -2557,7 +2561,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         int filmstripHeight = std::min(options.thumbSizeTab, 220);
         filmstripFullHeight_ = filmstripHeight;
         // Inset filmstrip so sidebars don't overlap its content
-        catalogPane->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
+        catalogPane->set_margin_start(options.editorShowLeftSidebar ? options.dirBrowserWidth : 0);
         catalogPane->set_margin_end(editorToolPanelInsetWidth());
         catalogPane->set_vexpand(false);
         catalogPane->set_valign(Gtk::ALIGN_START);
