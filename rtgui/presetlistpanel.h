@@ -21,6 +21,7 @@
 #include "steeppopup.h"
 
 #include "guiutils.h"
+#include "rtsigc.h"
 #include "pparamschangelistener.h"
 #include "profilechangelistener.h"
 #include "windows/partialpastedlg.h"
@@ -145,9 +146,19 @@ private:
     void startThumbnailGeneration();
     void cancelThumbnailGeneration(bool wait);
     void reapThumbnailThreads(bool wait);
-    void generateThumbnail(const ProfileStoreEntry* entry, ::Thumbnail* thumbnail, unsigned int generation,
-                           const rtengine::procparams::ProcParams& baseline, bool filled);
-    void collectPresetEntries(std::vector<const ProfileStoreEntry*>& entries);
+    struct PreviewJob {
+        const ProfileStoreEntry* entry;
+        Glib::ustring key;
+    };
+    void generateThumbnail(const PreviewJob& job, ::Thumbnail* thumbnail, unsigned int generation,
+                           unsigned int serial, const rtengine::procparams::ProcParams& baseline, bool filled);
+    // Presets whose preview is missing or was rendered from other inputs,
+    // the ones the user can see first.
+    void collectPresetEntries(std::vector<PreviewJob>& jobs, unsigned int serial);
+    // The current edit changed: re-render once the edit settles, and only
+    // while the list is on screen.
+    void refreshPreviewsSoon();
+    void reapplyPreviews();
 
     // Layout widgets
     Gtk::ScrolledWindow* scrolledWin_;
@@ -168,10 +179,10 @@ private:
 
     // Card tracking
     std::map<const ProfileStoreEntry*, Gtk::Button*> cardMap_;
-    std::map<const ProfileStoreEntry*, Gtk::Image*> thumbImageMap_;
     // The second card a favourite gets in the Favourites group.
     std::map<const ProfileStoreEntry*, Gtk::Button*> favCardMap_;
-    std::map<const ProfileStoreEntry*, Gtk::Image*> favThumbMap_;
+    // Every image showing a preset's preview, by preset key (folder/label).
+    std::map<Glib::ustring, std::vector<Gtk::Image*>> previewImages_;
     const ProfileStoreEntry* selectedEntry_;
     Gtk::Widget* selectedWidget_;
 
@@ -196,7 +207,20 @@ private:
 
     // Thumbnail state
     ::Thumbnail* openThm_;
-    std::map<const ProfileStoreEntry*, Glib::RefPtr<Gdk::Pixbuf>> thumbCache_;
+    // Rendered previews by preset key. They outlive list rebuilds (favourites,
+    // a re-read of the preset folders) and stay on screen until a preview
+    // made from new inputs replaces them. `serial` names the inputs.
+    struct CachedPreview {
+        Glib::RefPtr<Gdk::Pixbuf> pixbuf;
+        unsigned int serial = 0;
+    };
+    std::map<Glib::ustring, CachedPreview> thumbCache_;
+    rtengine::procparams::ProcParams previewBaseline_;
+    bool previewBaselineValid_ = false;
+    bool previewFilled_ = false;
+    unsigned int previewSerial_ = 0;
+    bool previewsStale_ = false;
+    RtScopedConnection scaleConn_;
     std::thread thumbThread_;
     std::shared_ptr<std::atomic<bool>> thumbThreadDone_;
     struct RetiredThumbThread {
