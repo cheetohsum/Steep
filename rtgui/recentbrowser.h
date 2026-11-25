@@ -37,6 +37,12 @@ public:
 private:
     Gtk::MenuButton* recentButton;
     std::unique_ptr<steepui::PopupMenu> recentPopup_;
+    // What the folder icon opens. A list popover rather than the GtkMenu
+    // above: its rows track the pointer themselves and carry the pop-up
+    // lists' hover wash (.SteepPopupList row:hover), where the menu's rows
+    // showed no highlight at all when opened from the icon.
+    std::unique_ptr<steepui::ListPopover> listPopover_;
+    Gtk::Widget* listAnchor_ = nullptr;
     DirSelectionSlot selectDir;
     // Shown above the recent folders (Browse, Directory cleanup): this menu is
     // what the folder icon opens, on hover and on click.

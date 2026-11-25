@@ -70,8 +70,51 @@ void RecentBrowser::rebuildMenu()
 
 void RecentBrowser::popupMenuAt (Gtk::Widget& anchor)
 {
-    rebuildMenu();
-    recentPopup_->popupAtWidget(anchor);
+    if (!listPopover_ || listAnchor_ != &anchor) {
+        listPopover_.reset(new steepui::ListPopover(anchor));
+        listAnchor_ = &anchor;
+    }
+    if (listPopover_->get_visible()) {
+        return;   // hover and click can both ask while it is already open
+    }
+
+    steepui::ListPopover& list = *listPopover_;
+    list.clear();
+    // The list does not close itself on activation: close it, then act (an
+    // action may open a dialog of its own).
+    const auto closing = [this](std::function<void()> action) {
+        return [this, action]() {
+            if (listPopover_) {
+                listPopover_->popdown();
+            }
+            if (action) {
+                action();
+            }
+        };
+    };
+
+    for (const auto& action : leadingActions_) {
+        list.addItem(action.first, closing(action.second));
+    }
+    if (!leadingActions_.empty()) {
+        list.addSeparator();
+    }
+
+    const auto& folders = App::get().options().recentFolders;
+    if (folders.empty()) {
+        auto* row = list.addItem(M("MAIN_FRAME_RECENT"), {});
+        row->set_sensitive(false);
+        row->set_activatable(false);
+    } else {
+        for (const auto& folder : folders) {
+            auto* row = list.addItem(folder, closing([this, folder]() { selectRecent(folder); }));
+            row->set_tooltip_text(folder);
+        }
+    }
+
+    list.list().unselect_all();
+    list.show_all();
+    list.popup();
 }
 
 void RecentBrowser::selectRecent(Glib::ustring dirname)
